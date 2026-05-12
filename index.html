@@ -196,6 +196,11 @@ body {
   gap: 8px;
   flex-shrink: 0;
 }
+.filterbar-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .filterbar-right {
   display: flex;
   align-items: center;
@@ -1665,6 +1670,186 @@ body {
   align-items: center;
 }
 .shot-add-row .field-input { flex: 1; min-width: 0; }
+
+/* ── TOUCH DEVICES: always show gallery nav arrows ───────────────── */
+@media (hover: none) {
+  .gallery-nav { opacity: 1 !important; }
+  .game-card:hover { transform: none; box-shadow: none; }
+}
+
+/* ── MOBILE — 640px and below ────────────────────────────────────── */
+@media (max-width: 640px) {
+
+  /* Topbar */
+  .topbar {
+    height: 48px;
+    padding: 0 10px;
+    gap: 8px;
+  }
+  .topbar-version { display: none; }
+  .topbar-count   { display: none; }
+  .sync-status    { display: none; }
+
+  /* Make topbar action buttons icon-only on mobile */
+  .topbar-actions { gap: 4px; }
+  .topbar-actions .btn { min-height: 36px; }
+
+  /* Hide text inside the scan/enrich buttons, show only icon */
+  #btn-scan  { font-size: 0; padding: 0; width: 36px; height: 36px; }
+  #btn-scan::after  { content: '📡'; font-size: 16px; }
+  #btn-enrich { font-size: 0; padding: 0; width: 36px; height: 36px; }
+  #btn-enrich::after { content: '✨'; font-size: 16px; }
+
+  /* Platform tabs: smaller padding */
+  .ptab { padding: 4px 8px; font-size: 11px; }
+
+  /* Filterbar: column layout — row 1 search, row 2 controls, row 3 status */
+  .filterbar {
+    top: 48px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+  /* filterbar-left stacks search + controls-row vertically */
+  .filterbar-left {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    flex-shrink: unset;
+  }
+  /* Row 1: search full-width */
+  .search-wrap { width: 100%; }
+  #search-input { width: 100% !important; }
+  #search-input:focus { width: 100% !important; }
+  /* Row 2: controls strip scrolls horizontally */
+  .filterbar-controls-row {
+    overflow-x: auto;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding-bottom: 2px;
+  }
+  .filterbar-controls-row::-webkit-scrollbar { display: none; }
+  /* Row 3: status filters strip scrolls horizontally */
+  .filterbar-right {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .filterbar-right::-webkit-scrollbar { display: none; }
+  .status-filters { flex-wrap: nowrap; }
+
+  /* Hide card size slider on mobile */
+  .card-size-wrap { display: none; }
+
+  /* Filterbar spacer not needed */
+  .filterbar-spacer { display: none; }
+
+  /* Main content padding */
+  .main { padding: 10px; }
+
+  /* Game grid: adjust sticky top for 2-row filterbar (approx 48+88=136px) */
+  .filterbar { min-height: auto; }
+
+  /* Default smaller card size on mobile */
+  .game-grid { --card-w: 140px; gap: 8px; }
+
+  /* Modal: bottom sheet style */
+  .modal-overlay { padding: 0; align-items: flex-end; }
+  .modal {
+    border-radius: 14px 14px 0 0;
+    max-height: 95vh;
+    max-width: 100%;
+    width: 100%;
+  }
+  .modal-2col { flex-direction: column; }
+  .modal-left {
+    flex: 0 0 auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 300px;
+  }
+  .modal-gallery-stage { min-height: 220px; }
+  .modal-right { max-height: none; }
+
+  /* Modal footer: full-width buttons */
+  .modal-footer {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 14px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+  .modal-footer .btn {
+    flex: 1;
+    min-width: 80px;
+    text-align: center;
+    justify-content: center;
+  }
+  #modal-delete { flex-basis: 100%; margin-right: 0; order: 10; }
+
+  /* Modal header: tighter */
+  .modal-header { padding: 12px 14px 10px; }
+  .modal-title-input { font-size: 16px; }
+
+  /* Settings modal full-width too */
+  .settings-modal { max-width: 100%; }
+
+  /* Collections panel: full width on mobile */
+  #collections-panel {
+    width: min(380px, 100vw);
+    right: calc(-1 * min(380px, 100vw));
+  }
+
+  /* Bulk action bar: safe area */
+  #bulk-bar {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  /* All buttons: 40px minimum touch target */
+  .btn, .ptab, .sfilt, .vtog, .status-btn, .btn-game-nav {
+    min-height: 40px;
+  }
+  .sfilt { min-height: 36px; padding: 6px 10px; }
+
+  /* Stats view: full width */
+  .stats-view { max-width: 100%; }
+
+  /* Ensure stat value doesn't overflow */
+  .stat-card-value { font-size: 26px; }
+
+  /* Now playing cards: slightly smaller */
+  .now-playing-card { width: 70px; }
+  .now-playing-thumb { width: 70px; height: 93px; }
+
+  /* Fullscreen gallery close button: bigger touch target */
+  #fs-close {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    top: 10px;
+    right: 10px;
+  }
+  .fs-nav { width: 44px; height: 44px; }
+
+  /* Toast: full width at bottom */
+  .toast {
+    left: 10px;
+    right: 10px;
+    max-width: none;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+}
+
+/* ── VERY SMALL PHONES — 480px and below ────────────────────────── */
+@media (max-width: 480px) {
+  .game-grid { --card-w: 130px; gap: 6px; }
+  .topbar-logo { font-size: 15px; }
+  .ptab { padding: 3px 7px; font-size: 10px; }
+  .stat-card-value { font-size: 22px; }
+  .stat-card { padding: 12px; }
+}
 </style>
 </head>
 <body>
@@ -1705,39 +1890,41 @@ body {
       <span class="search-icon">⌕</span>
       <input type="text" id="search-input" placeholder="Search…" autocomplete="off" spellcheck="false">
     </div>
-    <div class="sort-wrap">
-      <span class="sort-label">Sort</span>
-      <select id="sort-select">
-        <option value="title">Title A–Z</option>
-        <option value="title-desc">Title Z–A</option>
-        <option value="platform">Platform</option>
-        <option value="year">Year</option>
-        <option value="status">Status</option>
-        <option value="dateAdded">Date Added</option>
-        <option value="rating">Rating</option>
+    <div class="filterbar-controls-row">
+      <div class="sort-wrap">
+        <span class="sort-label">Sort</span>
+        <select id="sort-select">
+          <option value="title">Title A–Z</option>
+          <option value="title-desc">Title Z–A</option>
+          <option value="platform">Platform</option>
+          <option value="year">Year</option>
+          <option value="status">Status</option>
+          <option value="dateAdded">Date Added</option>
+          <option value="rating">Rating</option>
+        </select>
+      </div>
+      <select id="art-filter-select" title="Filter by art">
+        <option value="all">🖼 All</option>
+        <option value="has">Has art</option>
+        <option value="none">No art</option>
       </select>
-    </div>
-    <select id="art-filter-select" title="Filter by art">
-      <option value="all">🖼 All</option>
-      <option value="has">Has art</option>
-      <option value="none">No art</option>
-    </select>
-    <select id="hb-filter-select" title="Filter by homebrew">
-      <option value="all">🎮 All</option>
-      <option value="yes">Homebrew only</option>
-      <option value="no">Retail only</option>
-    </select>
-    <div class="card-size-wrap" title="Card size">
-      ⊞
-      <input type="range" id="card-size-slider" min="100" max="300" value="160" step="10">
-    </div>
-    <button class="vtog" id="btn-grid-img" title="Show screenshots in grid" style="font-size:13px">📷</button>
-    <button class="vtog" id="btn-bulk" title="Bulk select">☑</button>
-    <div class="view-toggle">
-      <button class="vtog active" data-view="grid" title="Grid view">⊞</button>
-      <button class="vtog" data-view="list" title="List view">☰</button>
-      <button class="vtog" data-view="covers" title="Covers view">⊟</button>
-      <button class="vtog" data-view="stats" id="btn-stats" title="Stats">◑</button>
+      <select id="hb-filter-select" title="Filter by homebrew">
+        <option value="all">🎮 All</option>
+        <option value="yes">Homebrew only</option>
+        <option value="no">Retail only</option>
+      </select>
+      <div class="card-size-wrap" title="Card size">
+        ⊞
+        <input type="range" id="card-size-slider" min="100" max="300" value="160" step="10">
+      </div>
+      <button class="vtog" id="btn-grid-img" title="Show screenshots in grid" style="font-size:13px">📷</button>
+      <button class="vtog" id="btn-bulk" title="Bulk select">☑</button>
+      <div class="view-toggle">
+        <button class="vtog active" data-view="grid" title="Grid view">⊞</button>
+        <button class="vtog" data-view="list" title="List view">☰</button>
+        <button class="vtog" data-view="covers" title="Covers view">⊟</button>
+        <button class="vtog" data-view="stats" id="btn-stats" title="Stats">◑</button>
+      </div>
     </div>
   </div>
 
@@ -1997,7 +2184,7 @@ body {
       <div class="settings-section" style="gap:6px">
         <div class="settings-section-title">About</div>
         <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
-          Cartridge Index <span id="app-version">v0.1.0</span><br>
+          Cartridge Index <span id="app-version">v0.5.2</span><br>
           Reads from Analogue Pocket SD card via File System Access API.<br>
           Metadata from <a href="https://www.screenscraper.fr" target="_blank" style="color:var(--accent)">ScreenScraper</a>.<br>
           Library synced to Google Drive appdata.
@@ -2074,7 +2261,7 @@ body {
 
 <script>
 /* ═══════════════════════════════════════════════════════════
-   CARTRIDGE INDEX — v0.5.1
+   CARTRIDGE INDEX — v0.5.2
    github.com/clickysteve/cartridge-index
    games.clickysteve.com
 ═══════════════════════════════════════════════════════════ */
@@ -2082,7 +2269,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.1';
+const APP_VERSION    = 'v0.5.2';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
