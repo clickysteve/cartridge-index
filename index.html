@@ -1306,7 +1306,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.3.4';
+const APP_VERSION    = 'v0.3.5';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -1314,7 +1314,7 @@ const TOKEN_KEY      = 'cartridge:gtoken:v1';
 const SS_CREDS_KEY   = 'cartridge:ss:creds:v1';
 
 const SS_API        = 'https://www.screenscraper.fr/api2/jeuInfos.php';
-const SS_CORS_PROXY = 'https://api.allorigins.win/get?url=';
+const SS_CORS_PROXY = 'https://corsproxy.io/?';
 
 const ITCH_API_KEY  = '5YGz0Yrp6dKu9oADRV2FUwC7BjGJ54RuGEdNiHHu';
 const ITCH_API      = 'https://itch.io/api/1/' + ITCH_API_KEY;
@@ -1715,23 +1715,23 @@ async function enrichGame(game) {
 
   try {
     const ssUrl = SS_API + '?' + params.toString();
-    const resp = await fetch(SS_CORS_PROXY + encodeURIComponent(ssUrl), {
+    // corsproxy.io: append URL directly (params already URL-encoded by URLSearchParams)
+    const resp = await fetch(SS_CORS_PROXY + ssUrl, {
       method: 'GET',
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(12000),
     });
 
     if (!resp.ok) {
-      // Handle rate limit (HTTP 430) or quota (HTTP 431)
       if (resp.status === 430 || resp.status === 431) {
         toast('ScreenScraper rate limit hit — try again later.', 'err');
-        return null; // signal to stop enrichment loop
+        return null;
       }
       game.ssAttempted = true;
       return false;
     }
 
-    const wrapper = await resp.json();
-    const data = typeof wrapper.contents === 'string' ? JSON.parse(wrapper.contents) : wrapper;
+    // corsproxy.io returns the raw SS JSON directly (no wrapper)
+    const data = await resp.json();
     const jeu = data?.response?.jeu;
 
     if (!jeu) {
@@ -1801,8 +1801,9 @@ function verifyImageUrl(url) {
 }
 
 // ── LIBRETRO THUMBNAILS ──────────────────────────────────
-// Tries multiple name variations because user ROMs may lack No-Intro region codes.
-// e.g. "10-Pin Bowling.gbc" needs to match "10-Pin Bowling (Europe).png"
+// Strategy: exact-name variants first, then fetch the repo tree and fuzzy-match.
+// The tree fetch is done once per platform and cached in memory.
+
 function encodeLibretroName(name) {
   return name
     .replace(/[&*`<>?\\|]/g, '_')
@@ -1812,32 +1813,83 @@ function encodeLibretroName(name) {
     .join('');
 }
 
+// Cache: platform → array of boxart filenames (without .png)
+const LIBRETRO_TREE_CACHE = new Map();
+
+async function getLibretroBoxartNames(platform) {
+  if (LIBRETRO_TREE_CACHE.has(platform)) return LIBRETRO_TREE_CACHE.get(platform);
+  const sys = LIBRETRO_SYSTEMS[platform];
+  if (!sys) { LIBRETRO_TREE_CACHE.set(platform, []); return []; }
+  try {
+    const r = await fetch(
+      'https://api.github.com/repos/libretro-thumbnails/' + sys + '/git/trees/master?recursive=1',
+      { signal: AbortSignal.timeout(15000) }
+    );
+    if (!r.ok) { LIBRETRO_TREE_CACHE.set(platform, []); return []; }
+    const data = await r.json();
+    const names = (data.tree || [])
+      .filter(f => f.type === 'blob' && f.path && f.path.startsWith('Named_Boxarts/') && f.path.endsWith('.png'))
+      .map(f => f.path.slice('Named_Boxarts/'.length, -4));
+    LIBRETRO_TREE_CACHE.set(platform, names);
+    console.log('[CI] libretro tree loaded for', platform, '—', names.length, 'entries');
+    return names;
+  } catch (e) {
+    console.warn('[CI] libretro tree fetch failed for', platform, e.message);
+    LIBRETRO_TREE_CACHE.set(platform, []);
+    return [];
+  }
+}
+
+function bestLibretroMatch(title, names) {
+  if (!names.length) return null;
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const qNorm = norm(title);
+  // Filter out short words and pure numbers (e.g. "1", "2" in "Croc 1")
+  const qWords = qNorm.split(' ').filter(w => w.length > 2 && !/^\d+$/.test(w));
+  if (!qWords.length) return null;
+
+  let best = null, bestScore = -1;
+  for (const name of names) {
+    // Strip region/revision tags for comparison
+    const stripped = norm(name.replace(/[\(\[{][^\)\]\}]*[\)\]\}]/g, '').replace(/\s*-\s*/g, ' '));
+    const matched = qWords.filter(w => stripped.includes(w));
+    if (!matched.length) continue;
+    const candWords = stripped.split(' ').filter(w => w.length > 2);
+    const wordRatio = Math.min(qWords.length, candWords.length) / Math.max(qWords.length, candWords.length, 1);
+    const score = (matched.length / qWords.length) * (0.5 + 0.5 * wordRatio);
+    if (score > bestScore) { bestScore = score; best = name; }
+  }
+  return bestScore >= 0.5 ? best : null;
+}
+
 async function findLibretroUrl(game) {
   const sys = LIBRETRO_SYSTEMS[game.platform];
   if (!sys) return null;
   const base = 'https://raw.githubusercontent.com/libretro-thumbnails/' + sys + '/master/Named_Boxarts/';
   const romBase = game.filename.replace(/\.[^.]+$/, '');
 
-  // Try exact filename first, then common No-Intro region suffixes
+  // Pass 1: try exact filename + common region variants (fast)
   const variants = [
-    romBase,
-    romBase + ' (USA)',
-    romBase + ' (Europe)',
-    romBase + ' (USA, Europe)',
-    romBase + ' (World)',
-    romBase + ' (Japan)',
-    romBase + ' (USA) (En)',
-    romBase + ' (Europe) (En)',
+    romBase, romBase + ' (USA)', romBase + ' (Europe)',
+    romBase + ' (USA, Europe)', romBase + ' (World)', romBase + ' (Japan)',
   ];
-
   for (const v of variants) {
     const url = base + encodeLibretroName(v) + '.png';
     if (await verifyImageUrl(url)) return url;
   }
+
+  // Pass 2: fetch the repo tree (once per platform) and fuzzy-match on title
+  const names = await getLibretroBoxartNames(game.platform);
+  const matched = bestLibretroMatch(game.title, names);
+  if (matched) {
+    const url = base + encodeLibretroName(matched) + '.png';
+    console.log('[CI] libretro fuzzy', game.title, '→', matched);
+    return url; // from actual tree listing — guaranteed to exist
+  }
   return null;
 }
 
-// Keep sync version for backward compat (used only where we don't need verification)
+// Sync version kept for any remaining callers
 function libretroArtUrl(game) {
   const sys = LIBRETRO_SYSTEMS[game.platform];
   if (!sys) return null;
