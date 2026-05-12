@@ -856,15 +856,17 @@ body {
 .modal-gallery-main {
   width: 100%;
   height: 100%;
+  align-self: stretch;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .modal-gallery-main img {
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   display: block;
+  image-rendering: pixelated; /* crisp upscale for pixel-art screenshots */
   background: var(--surface-2);
 }
 .modal-gallery-main .gallery-placeholder {
@@ -932,9 +934,9 @@ body {
   background: var(--surface-1);
 }
 .modal-gallery-main video {
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
   height: 100%;
+  object-fit: contain;
   display: block;
   background: #000;
 }
@@ -2212,7 +2214,7 @@ body {
       <div class="settings-section" style="gap:6px">
         <div class="settings-section-title">About</div>
         <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
-          Cartridge Index <span id="app-version">v0.5.8</span><br>
+          Cartridge Index <span id="app-version">v0.5.9</span><br>
           Reads from Analogue Pocket SD card via File System Access API.<br>
           Metadata from <a href="https://www.screenscraper.fr" target="_blank" style="color:var(--accent)">ScreenScraper</a>.<br>
           Library synced to Google Drive appdata.
@@ -2297,7 +2299,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.8';
+const APP_VERSION    = 'v0.5.9';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3591,11 +3593,12 @@ function isVideoUrl(src) {
     || /[?&]media=video/i.test(src);
 }
 
-// Proxy a URL if it's from screenscraper.fr (images need CORS proxy too)
+// Proxy a URL if it's from screenscraper.fr (images need CORS proxy too).
+// corsproxy.io expects the target URL appended raw (not encoded) — same as API calls.
 function mediaProxyUrl(src) {
   if (!src) return src;
   if (src.includes('screenscraper.fr') && !src.startsWith(SS_CORS_PROXY)) {
-    return SS_CORS_PROXY + encodeURIComponent(src);
+    return SS_CORS_PROXY + src;
   }
   return src;
 }
@@ -4439,15 +4442,17 @@ function bootstrap() {
     if (!match) { toast('No matching itch.io game found for that URL.', 'err'); return; }
     game.itchUrl = match.url || url;
     game.homebrew = true;  // anything on itch.io is homebrew
-    if (match.cover_url && !game.boxArt) game.boxArt = match.cover_url;
-    if (match.title && !game.title) game.title = match.title;
+    // Always apply itch art when explicitly fetched — overwrite existing art
+    const gotArt = !!match.cover_url;
+    if (match.cover_url) game.boxArt = match.cover_url;
+    if (match.title) game.title = match.title;
     el('modal-itch-url-input').value = game.itchUrl;
     el('modal-itch-link').href = game.itchUrl;
     el('modal-itch-link-row').style.display = 'flex';
     if (match.cover_url) el('modal-art-url').value = match.cover_url;
     renderGames();
     scheduleSave();
-    toast('itch.io linked' + (match.cover_url && !game.boxArt ? ' + art fetched' : '') + '!', 'ok');
+    toast('itch.io linked' + (gotArt ? ' + art applied' : '') + '!', 'ok');
     openGameModal(game.id);
   });
 
