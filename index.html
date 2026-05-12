@@ -1306,7 +1306,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.3.1';
+const APP_VERSION    = 'v0.3.2';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -1864,10 +1864,15 @@ async function enrichAll() {
   const needArt  = visible.filter(g => !g.boxArt && g.platform !== 'other');
 
   if (toEnrich.length === 0 && needArt.length === 0) {
-    toast('All visible games already enriched.', 'ok');
+    // Everything already enriched — maybe art is there but 404ing.
+    // Show counts and let user force-reset via shift+click if needed.
+    const withArt = visible.filter(g => g.boxArt).length;
+    toast('All enriched (' + withArt + '/' + visible.length + ' have art URLs). Shift+click Enrich to reset and retry.', 'ok');
+    el('btn-enrich').disabled = false;
     return;
   }
 
+  console.log('[CI] enrichAll: needArt=' + needArt.length + ' toEnrich=' + toEnrich.length);
   el('btn-enrich').disabled = true;
   let done = 0;
 
@@ -1875,12 +1880,19 @@ async function enrichAll() {
   for (const game of needArt) {
     showProgress('Libretro thumbnails… ' + done + '/' + needArt.length, Math.round(done / needArt.length * 100));
     const url = libretroArtUrl(game);
+    console.log('[CI] libretro ' + game.filename + ' →', url || 'null');
     if (url) game.boxArt = url;
     done++;
   }
   // Render immediately so art appears without waiting for SS/itch
   renderGames();
   scheduleSave();
+
+  // Show user how many got a libretro URL (images may still 404 if filenames don't match No-Intro)
+  const libretroHits = needArt.filter(g => g.boxArt).length;
+  if (needArt.length > 0) {
+    toast('Pass 1: ' + libretroHits + '/' + needArt.length + ' got libretro URLs.', 'ok');
+  }
 
   // ── Pass 2: ScreenScraper (metadata + art for remainder) ──
   if (!hasSsCreds) {
@@ -2353,8 +2365,15 @@ function bootstrap() {
   // Scan
   el('btn-scan').addEventListener('click', scanPocket);
 
-  // Enrich
-  el('btn-enrich').addEventListener('click', enrichAll);
+  // Enrich — shift+click to force-reset ssAttempted & boxArt before enriching
+  el('btn-enrich').addEventListener('click', e => {
+    if (e.shiftKey) {
+      const visible = getFilteredGames();
+      visible.forEach(g => { g.ssAttempted = false; g.boxArt = null; });
+      toast('Art + metadata reset for visible games. Running enrich…', 'ok');
+    }
+    enrichAll();
+  });
 
   // Settings
   el('btn-settings').addEventListener('click', openSettings);
