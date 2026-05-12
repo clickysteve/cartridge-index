@@ -2212,7 +2212,7 @@ body {
       <div class="settings-section" style="gap:6px">
         <div class="settings-section-title">About</div>
         <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
-          Cartridge Index <span id="app-version">v0.5.5</span><br>
+          Cartridge Index <span id="app-version">v0.5.6</span><br>
           Reads from Analogue Pocket SD card via File System Access API.<br>
           Metadata from <a href="https://www.screenscraper.fr" target="_blank" style="color:var(--accent)">ScreenScraper</a>.<br>
           Library synced to Google Drive appdata.
@@ -2297,7 +2297,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.5';
+const APP_VERSION    = 'v0.5.6';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2942,28 +2942,46 @@ function libretroArtUrl(game) {
 }
 
 // ── FETCH ITCH GAME BY URL ───────────────────────────────
-// Handles both https://user.itch.io/game-slug and https://itch.io/games/...
+// Primary: fetch the itch page directly and extract og:image (works for any URL).
+// Fallback: API search by slug (for cases where the proxy is blocked).
 async function fetchItchGameByUrl(itchUrl) {
   if (!itchUrl) return null;
+  const url = itchUrl.trim().replace(/\/+$/, '');
 
-  // Extract username + slug from subdomain style: user.itch.io/slug
-  const subMatch = itchUrl.match(/https?:\/\/([^.]+)\.itch\.io\/([^\/\?#\s]+)/i);
-  // Or plain path style: itch.io/games/slug
-  const pathMatch = !subMatch && itchUrl.match(/itch\.io\/(?:games\/)?([^\/\?#\s]+)/i);
+  // ── Pass 1: Scrape og:image / og:title directly from the game page ──
+  try {
+    const pageResp = await fetch(SS_CORS_PROXY + url, {
+      signal: AbortSignal.timeout(14000),
+    });
+    if (pageResp.ok) {
+      const html = await pageResp.text();
+      // og:image — try both attribute orderings
+      const coverMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+        || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+      // og:title — typically "Game Name by Username"
+      const titleMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)
+        || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i);
+      if (coverMatch) {
+        const rawTitle = titleMatch ? titleMatch[1] : null;
+        // Strip " by Username" suffix itch.io appends
+        const title = rawTitle ? rawTitle.replace(/\s+by\s+.+$/i, '').trim() : null;
+        return { url, cover_url: coverMatch[1], title };
+      }
+    }
+  } catch { /* fall through */ }
 
-  let username = null, slug = null;
-  if (subMatch)      { username = subMatch[1]; slug = subMatch[2]; }
-  else if (pathMatch){ slug = pathMatch[1]; }
+  // ── Pass 2: API search by slug (fallback) ──
+  const subMatch = url.match(/https?:\/\/([^.]+)\.itch\.io\/([^\/\?#\s]+)/i);
+  const pathMatch = !subMatch && url.match(/itch\.io\/(?:games\/)?([^\/\?#\s]+)/i);
+  const username = subMatch ? subMatch[1] : null;
+  const slug     = subMatch ? subMatch[2] : (pathMatch ? pathMatch[1] : null);
   if (!slug) return null;
 
-  const norm = u => (u || '').toLowerCase().replace(/\/+$/, '').replace(/^https?:/, '');
-  const target = norm(itchUrl);
-  const titleQuery = slug.replace(/-/g, ' ');
-
-  // Try two queries: "username slug-title" first (more specific), then just "slug-title"
+  const norm = u => (u || '').toLowerCase().replace(/\/+$/, '').replace(/^https?:\/\//, '//');
+  const target = norm(url);
   const queries = username
-    ? [username + ' ' + titleQuery, titleQuery]
-    : [titleQuery];
+    ? [username + ' ' + slug.replace(/-/g, ' '), slug.replace(/-/g, ' ')]
+    : [slug.replace(/-/g, ' ')];
 
   for (const query of queries) {
     try {
