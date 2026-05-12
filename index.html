@@ -2491,7 +2491,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.21';
+const APP_VERSION    = 'v0.5.22';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3430,11 +3430,6 @@ async function enrichOneGame(game) {
     if (url) game.boxArt = url;
   }
 
-  // YouTube fallback — gameplay video for all games, via Invidious (no API key needed)
-  if (!game.ytAttempted && game.platform !== 'other') {
-    const ytId = await fetchYtVideoId(game);
-    if (ytId) game.ytVideoId = ytId;
-  }
 }
 
 async function enrichAll(scope) {
@@ -3532,21 +3527,6 @@ async function enrichAll(scope) {
     if (result === null) break; // rate limit — stop
     done++;
     await new Promise(r => setTimeout(r, 300));
-  }
-
-  // ── Pass 4: YouTube gameplay videos (Invidious, no API key) ──
-  const needYt = visible.filter(g => !g.ytAttempted && g.platform !== 'other');
-  if (needYt.length) {
-    done = 0;
-    for (const game of needYt) {
-      showProgress('YouTube… ' + done + '/' + needYt.length, Math.round(done / needYt.length * 100));
-      const ytId = await fetchYtVideoId(game);
-      if (ytId) game.ytVideoId = ytId;
-      done++;
-      await new Promise(r => setTimeout(r, 250));
-    }
-    renderGames();
-    scheduleSave();
   }
 
   hideProgress();
@@ -3819,11 +3799,10 @@ function cardHTML(g, isDupe = false) {
   const firstShot = allShots[0];
   const primarySrc = ui.gridImg === 'shot' ? (firstShot || g.boxArt) : g.boxArt;
 
-  // Images for hover cycling (static + GIFs + YT thumb, no SS videos — those via data-video)
-  const ytThumb = g.ytVideoId ? ytThumbUrl(g.ytVideoId) : null;
+  // Images for hover cycling (static + GIFs, no videos — videos via data-video)
   const cycleImgs = ui.gridImg === 'shot'
-    ? [g.boxArt, ...allShots.slice(1), ytThumb].filter(Boolean)
-    : [...allShots, ytThumb].filter(Boolean);
+    ? [g.boxArt, ...allShots.slice(1)].filter(Boolean)
+    : allShots.filter(Boolean);
 
   const errFallback = `var p=document.createElement('div');p.className='card-art-placeholder';p.innerHTML='<div class=\\'card-art-placeholder-icon\\'>🎮</div><div class=\\'card-art-placeholder-label\\'>${plat.label}</div>';this.replaceWith(p)`;
   const artHTML = primarySrc
@@ -4092,40 +4071,35 @@ function videoProxyUrl(src) {
   return src;
 }
 
-// ── YOUTUBE via INVIDIOUS ────────────────────────────────
-// Invidious is an open-source YouTube frontend with a public API.
-// No API key required — used to find gameplay videos for retail games.
-const YT_INVIDIOUS_INSTANCES = [
-  'https://inv.nadeko.net',
-  'https://invidious.privacydev.net',
-];
+// ── YOUTUBE SEARCH EMBED ─────────────────────────────────
+// No API key or third-party service needed.
+// YouTube's listType=search embed works with just a query string.
 
+// Returns a yt: pseudo-URL for the gallery. Two forms:
+//   yt:VIDEO_ID_11     → specific video (if manually stored)
+//   yt:search:QUERY    → search embed (auto-generated from title)
+function ytSearchSlot(game) {
+  if (game.ytVideoId) return 'yt:' + game.ytVideoId;
+  if (game.platform === 'other' || game.homebrew) return null;
+  const plat  = PLATFORMS[game.platform]?.label || '';
+  const query = (game.title || '') + ' ' + plat + ' gameplay';
+  return 'yt:search:' + query;
+}
+
+// Returns the YouTube thumbnail URL (only available for known video IDs)
 function ytThumbUrl(id) {
   return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
 }
 
-async function fetchYtVideoId(game) {
-  if (game.ytAttempted) return null;
-  game.ytAttempted = true;
-  const plat = PLATFORMS[game.platform]?.label || '';
-  const q = encodeURIComponent((game.title || '') + ' ' + plat + ' gameplay');
-  for (const base of YT_INVIDIOUS_INSTANCES) {
-    const apiUrl = `${base}/api/v1/search?q=${q}&type=video&fields=videoId,title&page=1`;
-    // Must proxy through allorigins to avoid CORS block in browser
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
-    try {
-      const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
-      if (!r.ok) continue;
-      const data = await r.json();
-      const results = JSON.parse(data.contents || '[]');
-      if (Array.isArray(results) && results.length) {
-        const id = results[0].videoId;
-        if (id) { console.log('[CI] YT video found for', game.title, '→', id); return id; }
-      }
-    } catch (e) { console.warn('[CI] YT fetch failed:', game.title, e.message); }
+// Build an <iframe> src for a yt: slot
+function ytEmbedSrc(ytSlot) {
+  const part = ytSlot.slice(3); // strip 'yt:'
+  if (part.startsWith('search:')) {
+    const q = encodeURIComponent(part.slice(7));
+    return `https://www.youtube.com/embed?listType=search&list=${q}&autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1`;
   }
-  console.log('[CI] YT no result for', game.title);
-  return null;
+  // Specific video ID
+  return `https://www.youtube.com/embed/${part}?autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1`;
 }
 
 function setFsSlide(idx) {
@@ -4135,9 +4109,8 @@ function setFsSlide(idx) {
   if (!src) {
     contentEl.innerHTML = '<span style="font-size:48px;opacity:.3">🎮</span>';
   } else if (src.startsWith('yt:')) {
-    const ytId = src.slice(3);
     contentEl.innerHTML = `<iframe
-      src="https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1"
+      src="${ytEmbedSrc(src)}"
       style="width:min(94vw,900px);height:min(53vw,506px);max-height:88vh;border:none;background:#000"
       allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
   } else if (isVideoUrl(src)) {
@@ -4180,10 +4153,11 @@ function openGameModal(id) {
   const plat = PLATFORMS[game.platform] || PLATFORMS.other;
 
   // ── Gallery (box art + screenshots + YouTube) ──
+  // ytSearchSlot() always returns a slot for retail games — no enrichment needed
   const galleryImages = [
     game.boxArt,
     ...(game.screenshots || []),
-    game.ytVideoId ? ('yt:' + game.ytVideoId) : null,
+    ytSearchSlot(game),
   ].filter(Boolean);
   let galleryIdx = 0;
 
@@ -4197,10 +4171,8 @@ function openGameModal(id) {
     if (!src) {
       mainEl.innerHTML = '<span class="gallery-placeholder">🎮</span>';
     } else if (src.startsWith('yt:')) {
-      // YouTube embed via iframe (autoplay muted)
-      const ytId = src.slice(3);
       mainEl.innerHTML = `<iframe
-        src="https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1"
+        src="${ytEmbedSrc(src)}"
         style="width:100%;height:100%;border:none;background:#000"
         allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
     } else if (isVideoUrl(src)) {
@@ -4227,11 +4199,20 @@ function openGameModal(id) {
     thumbsEl.innerHTML = galleryImages.map((src, i) => {
       let inner;
       if (src.startsWith('yt:')) {
-        // YouTube thumbnail with play overlay
-        inner = `<div style="position:relative;width:100%;height:100%">
-          <img src="${ytThumbUrl(src.slice(3))}" alt="" style="width:100%;height:100%;object-fit:cover">
-          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);font-size:18px">▶</div>
-        </div>`;
+        const part = src.slice(3);
+        if (!part.startsWith('search:') && /^[A-Za-z0-9_-]{11}$/.test(part)) {
+          // Known video ID — show real thumbnail
+          inner = `<div style="position:relative;width:100%;height:100%">
+            <img src="${ytThumbUrl(part)}" alt="" style="width:100%;height:100%;object-fit:cover">
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);font-size:18px">▶</div>
+          </div>`;
+        } else {
+          // Search-based — YouTube branded placeholder
+          inner = `<div style="width:100%;height:100%;background:#1a1a1a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px">
+            <div style="background:#ff0000;border-radius:4px;width:28px;height:20px;display:flex;align-items:center;justify-content:center;font-size:12px">▶</div>
+            <div style="font-size:8px;color:#aaa;font-weight:700;letter-spacing:.05em">YT</div>
+          </div>`;
+        }
       } else if (isVideoUrl(src)) {
         inner = `<div class="gallery-thumb-video">▶</div>`;
       } else {
@@ -4894,8 +4875,6 @@ function bootstrap() {
     btn.disabled = true;
     btn.textContent = '…';
     game.ssAttempted = false;
-    game.ytAttempted = false;
-    game.ytVideoId = null;
     game.boxArt = null;
     game.screenshots = [];
     await enrichOneGame(game);
