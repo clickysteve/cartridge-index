@@ -1367,7 +1367,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.4.0';
+const APP_VERSION    = 'v0.4.1';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -1930,10 +1930,19 @@ async function findLibretroUrl(game) {
   const base = 'https://raw.githubusercontent.com/libretro-thumbnails/' + sys + '/master/Named_Boxarts/';
   const romBase = game.filename.replace(/\.[^.]+$/, '');
 
-  // Pass 1: try exact filename + common region variants (fast)
+  // Pass 1: try exact filename + common No-Intro region variants (fast)
   const variants = [
-    romBase, romBase + ' (USA)', romBase + ' (Europe)',
-    romBase + ' (USA, Europe)', romBase + ' (World)', romBase + ' (Japan)',
+    romBase,
+    romBase + ' (USA)',
+    romBase + ' (USA, Europe)',
+    romBase + ' (USA, Europe, Australia)',
+    romBase + ' (USA, Australia)',
+    romBase + ' (Europe)',
+    romBase + ' (Europe) (En)',
+    romBase + ' (Europe) (En,Fr,De,Es,It)',
+    romBase + ' (World)',
+    romBase + ' (Japan)',
+    romBase + ' (Japan, USA)',
   ];
   for (const v of variants) {
     const url = base + encodeLibretroName(v) + '.png';
@@ -1963,7 +1972,7 @@ function libretroArtUrl(game) {
 async function itchArt(game) {
   try {
     const resp = await fetch(
-      ITCH_API + '/search/games?query=' + encodeURIComponent(game.title),
+      SS_CORS_PROXY + ITCH_API + '/search/games?query=' + encodeURIComponent(game.title),
       { signal: AbortSignal.timeout(8000) }
     );
     if (!resp.ok) return null;
@@ -1997,9 +2006,11 @@ async function enrichFallbackArt(game) {
   const libUrl = await findLibretroUrl(game);
   if (libUrl) { game.boxArt = libUrl; return; }
 
-  // Try itch.io (good for homebrew, also catches some retail misses)
-  const itchUrl = await itchArt(game);
-  if (itchUrl) game.boxArt = itchUrl;
+  // Try itch.io — homebrew only (retail games aren't on itch.io)
+  if (game.homebrew) {
+    const itchUrl = await itchArt(game);
+    if (itchUrl) game.boxArt = itchUrl;
+  }
 }
 
 // Enrich a single game: itch.io first for homebrew, then libretro, then SS, then itch.io
@@ -2029,8 +2040,8 @@ async function enrichOneGame(game) {
     await enrichGame(game);
   }
 
-  // itch.io fallback if still no art (non-homebrew retail misses)
-  if (!game.boxArt) {
+  // itch.io fallback — homebrew only (retail games don't exist on itch.io)
+  if (!game.boxArt && game.homebrew) {
     const url = await itchArt(game);
     if (url) game.boxArt = url;
   }
@@ -2104,18 +2115,9 @@ async function enrichAll() {
     toast('Libretro: ' + libretroHits + '/' + retailNeedArt.length + ' images found.', libretroHits > 0 ? 'ok' : '');
   }
 
-  // ── Pass 3: itch.io for retail games still missing art ──
-  const stillNoArt = visible.filter(g => !g.boxArt && !g.homebrew && g.platform !== 'other');
-  done = 0;
-  for (const game of stillNoArt) {
-    showProgress('itch.io fallback… ' + done + '/' + stillNoArt.length, Math.round(done / stillNoArt.length * 100));
-    const url = await itchArt(game);
-    if (url) game.boxArt = url;
-    done++;
-    await new Promise(r => setTimeout(r, 100));
-  }
-
-  // ── Pass 4: ScreenScraper (metadata + art for remainder) ──
+  // ── Pass 3: ScreenScraper (metadata + art for remainder) ──
+  // (itch.io retail fallback removed — retail GBC/GBA games don't exist on itch.io
+  //  and the API calls just waste rate limit budget.)
   if (!hasSsCreds) {
     toast('Tip: add ScreenScraper credentials in Settings for better metadata.', 'ok');
   }
