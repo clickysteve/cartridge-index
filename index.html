@@ -1095,6 +1095,8 @@ body {
 .status-btn.active[data-s="playing"]   { border-color: var(--s-playing);   color: var(--s-playing); background: rgba(251,146,60,.12); }
 .status-btn.active[data-s="completed"] { border-color: var(--s-completed); color: var(--s-completed); background: rgba(74,222,128,.12); }
 .status-btn.active[data-s="dropped"]   { border-color: var(--s-dropped);   color: var(--s-dropped); background: rgba(248,113,113,.12); }
+#modal-hb-retail.active   { border-color: #60a5fa; color: #60a5fa; background: rgba(96,165,250,.12); }
+#modal-hb-homebrew.active { border-color: var(--accent); color: var(--accent); background: rgba(251,146,60,.12); }
 
 /* Star rating */
 .star-rating {
@@ -2062,6 +2064,15 @@ body {
           </div>
         </div>
 
+        <!-- Homebrew toggle -->
+        <div>
+          <div class="field-label">Type</div>
+          <div style="display:flex;gap:6px">
+            <button class="status-btn" id="modal-hb-retail"><span class="sdot" style="background:#60a5fa"></span>Retail</button>
+            <button class="status-btn" id="modal-hb-homebrew"><span class="sdot" style="background:var(--accent)"></span>Homebrew</button>
+          </div>
+        </div>
+
         <!-- Status -->
         <div>
           <div class="field-label">Status</div>
@@ -2201,7 +2212,7 @@ body {
       <div class="settings-section" style="gap:6px">
         <div class="settings-section-title">About</div>
         <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
-          Cartridge Index <span id="app-version">v0.5.3</span><br>
+          Cartridge Index <span id="app-version">v0.5.4</span><br>
           Reads from Analogue Pocket SD card via File System Access API.<br>
           Metadata from <a href="https://www.screenscraper.fr" target="_blank" style="color:var(--accent)">ScreenScraper</a>.<br>
           Library synced to Google Drive appdata.
@@ -2286,7 +2297,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.3';
+const APP_VERSION    = 'v0.5.4';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3626,6 +3637,27 @@ function openGameModal(id) {
   const badges = [`<span class="badge" style="color:${plat.color};border-color:${plat.color}33;background:${plat.color}15">${plat.label}</span>`];
   if (game.homebrew) badges.push('<span class="badge badge-hb">Homebrew</span>');
   el('modal-badges').innerHTML = badges.join('');
+
+  // Homebrew toggle
+  el('modal-hb-retail').classList.toggle('active', !game.homebrew);
+  el('modal-hb-homebrew').classList.toggle('active', !!game.homebrew);
+  el('modal-hb-retail').onclick = () => {
+    game.homebrew = false;
+    el('modal-hb-retail').classList.add('active');
+    el('modal-hb-homebrew').classList.remove('active');
+    const b = [`<span class="badge" style="color:${plat.color};border-color:${plat.color}33;background:${plat.color}15">${plat.label}</span>`];
+    el('modal-badges').innerHTML = b.join('');
+    scheduleSave();
+  };
+  el('modal-hb-homebrew').onclick = () => {
+    game.homebrew = true;
+    el('modal-hb-homebrew').classList.add('active');
+    el('modal-hb-retail').classList.remove('active');
+    const b = [`<span class="badge" style="color:${plat.color};border-color:${plat.color}33;background:${plat.color}15">${plat.label}</span>`,
+               '<span class="badge badge-hb">Homebrew</span>'];
+    el('modal-badges').innerHTML = b.join('');
+    scheduleSave();
+  };
 
   // Editable metadata fields
   el('modal-edit-year').value      = game.year       || '';
