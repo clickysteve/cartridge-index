@@ -1306,7 +1306,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.3.2';
+const APP_VERSION    = 'v0.3.3';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -1761,11 +1761,15 @@ async function enrichGame(game) {
     if (jeu.editeur?.text)     game.publisher  = jeu.editeur.text;
     if (jeu.joueurs?.text)     game.players    = jeu.joueurs.text;
 
-    // Parse box art URL
+    // Parse box art URL — verify it loads before committing
     const boxMedia = jeu.medias?.find(m =>
       m.type === 'box-2D' && preferredRegions.includes(m.region?.toLowerCase())
     ) || jeu.medias?.find(m => m.type === 'box-2D');
-    if (boxMedia?.url) game.boxArt = boxMedia.url;
+    if (boxMedia?.url && !game.boxArt) {
+      const ssImgOk = await verifyImageUrl(boxMedia.url);
+      if (ssImgOk) game.boxArt = boxMedia.url;
+      else console.warn('[CI] SS box art URL 404:', boxMedia.url);
+    }
 
     game.ssId = jeu.id || null;
     game.ssAttempted = true;
@@ -1783,8 +1787,20 @@ async function enrichGame(game) {
   }
 }
 
+// ── IMAGE URL VERIFIER ───────────────────────────────────
+// Returns true if the URL responds with an image, false on 404/error/timeout.
+// GitHub raw and most CDNs support CORS HEAD requests.
+function verifyImageUrl(url) {
+  return new Promise(resolve => {
+    const img = new Image();
+    const timer = setTimeout(() => { img.src = ''; resolve(false); }, 6000);
+    img.onload  = () => { clearTimeout(timer); resolve(true); };
+    img.onerror = () => { clearTimeout(timer); resolve(false); };
+    img.src = url;
+  });
+}
+
 // ── LIBRETRO THUMBNAILS ──────────────────────────────────
-// No network check — just build the URL and let the img onerror handle 404s.
 // Libretro Named_Boxarts uses the FULL ROM name: "EarthBound (USA).png"
 function libretroArtUrl(game) {
   const sys = LIBRETRO_SYSTEMS[game.platform];
@@ -1824,9 +1840,9 @@ async function itchArt(game) {
 async function enrichFallbackArt(game) {
   if (game.boxArt) return; // already has art
 
-  // Try libretro first (all games — pocket platform may miss but that's fine)
+  // Try libretro first (verify image loads before setting)
   const libUrl = libretroArtUrl(game);
-  if (libUrl) { game.boxArt = libUrl; return; }
+  if (libUrl && await verifyImageUrl(libUrl)) { game.boxArt = libUrl; return; }
 
   // Try itch.io (good for homebrew, also catches some retail misses)
   const itchUrl = await itchArt(game);
@@ -1835,10 +1851,10 @@ async function enrichFallbackArt(game) {
 
 // Enrich a single game: libretro first, then SS (for metadata), then itch.io
 async function enrichOneGame(game) {
-  // Always try libretro first — it's reliable and needs no auth
+  // Always try libretro first — verify image loads before setting
   if (!game.boxArt) {
     const url = libretroArtUrl(game);
-    if (url) game.boxArt = url;
+    if (url && await verifyImageUrl(url)) game.boxArt = url;
   }
 
   // SS for metadata (and SS art if libretro missed)
@@ -1876,22 +1892,24 @@ async function enrichAll() {
   el('btn-enrich').disabled = true;
   let done = 0;
 
-  // ── Pass 1: libretro (fast, no auth — works for all retail platforms) ──
+  // ── Pass 1: libretro (verify image loads before committing URL) ──
+  let libretroHits = 0;
   for (const game of needArt) {
     showProgress('Libretro thumbnails… ' + done + '/' + needArt.length, Math.round(done / needArt.length * 100));
     const url = libretroArtUrl(game);
-    console.log('[CI] libretro ' + game.filename + ' →', url || 'null');
-    if (url) game.boxArt = url;
+    if (url) {
+      const ok = await verifyImageUrl(url);
+      console.log('[CI] libretro ' + game.filename + ' →', ok ? '✓' : '✗ 404', url);
+      if (ok) { game.boxArt = url; libretroHits++; }
+    }
     done++;
   }
   // Render immediately so art appears without waiting for SS/itch
   renderGames();
   scheduleSave();
 
-  // Show user how many got a libretro URL (images may still 404 if filenames don't match No-Intro)
-  const libretroHits = needArt.filter(g => g.boxArt).length;
   if (needArt.length > 0) {
-    toast('Pass 1: ' + libretroHits + '/' + needArt.length + ' got libretro URLs.', 'ok');
+    toast('Pass 1: ' + libretroHits + '/' + needArt.length + ' libretro images loaded.', libretroHits > 0 ? 'ok' : 'err');
   }
 
   // ── Pass 2: ScreenScraper (metadata + art for remainder) ──
