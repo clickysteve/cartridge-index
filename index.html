@@ -1273,13 +1273,14 @@ const DRIVE_FILENAME = 'cartridge-index-state.json';
 const TOKEN_KEY      = 'cartridge:gtoken:v1';
 const SS_CREDS_KEY   = 'cartridge:ss:creds:v1';
 
-const SS_API   = 'https://www.screenscraper.fr/api2/jeuInfos.php';
+const SS_API        = 'https://www.screenscraper.fr/api2/jeuInfos.php';
+const SS_CORS_PROXY = 'https://corsproxy.io/?url=';
 const SS_SYSTEMS = { gb: 9, gbc: 10, gba: 12, nes: 3, snes: 4 };
 
 const PLATFORMS = {
   gb:    { label: 'GB',   color: '#22c55e', exts: ['.gb', '.pocket'] },
   gbc:   { label: 'GBC',  color: '#e879f9', exts: ['.gbc']           },
-  gba:   { label: 'GBA',  color: '#818cf8', exts: ['.gba']           },
+  gba:   { label: 'GBA',  color: '#facc15', exts: ['.gba']           },
   nes:   { label: 'NES',  color: '#f87171', exts: ['.nes']           },
   snes:  { label: 'SNES', color: '#60a5fa', exts: ['.sfc','.smc']    },
   other: { label: '?',    color: '#94a3b8', exts: []                 },
@@ -1402,9 +1403,7 @@ function clearStoredToken() { localStorage.removeItem(TOKEN_KEY); }
 async function initGapi() {
   await waitFor(() => typeof gapi !== 'undefined');
   await new Promise(res => gapi.load('client', res));
-  await gapi.client.init({
-    discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
-  });
+  // No discovery doc needed — we use raw gapi.client.request() throughout
   gapiReady = true;
 }
 
@@ -1427,11 +1426,15 @@ function makeTokenClient(onSuccess, onError) {
 
 // ── DRIVE FILE OPS ───────────────────────────────────────
 async function driveFindFile() {
-  const r = await gapi.client.drive.files.list({
-    spaces: 'appDataFolder',
-    fields: 'files(id,name,modifiedTime)',
-    q: "name = '" + DRIVE_FILENAME + "'",
-    pageSize: 5,
+  const r = await gapi.client.request({
+    path: 'https://www.googleapis.com/drive/v3/files',
+    method: 'GET',
+    params: {
+      spaces: 'appDataFolder',
+      fields: 'files(id,name,modifiedTime)',
+      q: "name = '" + DRIVE_FILENAME + "'",
+      pageSize: 5,
+    },
   });
   const f = (r.result.files || [])[0];
   driveFileId = f ? f.id : null;
@@ -1441,7 +1444,11 @@ async function driveFindFile() {
 async function driveLoad() {
   const f = await driveFindFile();
   if (!f) return null;
-  const r = await gapi.client.drive.files.get({ fileId: f.id, alt: 'media' });
+  const r = await gapi.client.request({
+    path: 'https://www.googleapis.com/drive/v3/files/' + f.id,
+    method: 'GET',
+    params: { alt: 'media' },
+  });
   try {
     return typeof r.body === 'string' ? JSON.parse(r.body) : r.body;
   } catch { return null; }
@@ -1599,6 +1606,8 @@ async function scanPocket() {
 
 async function walkDir(dirHandle, results, path) {
   for await (const [name, handle] of dirHandle.entries()) {
+    // Skip macOS metadata files (._filename, .DS_Store, etc.)
+    if (name.startsWith('._') || name === '.DS_Store' || name.startsWith('.')) continue;
     if (handle.kind === 'directory') {
       await walkDir(handle, results, path + name + '/');
     } else if (handle.kind === 'file') {
@@ -1637,7 +1646,8 @@ async function enrichGame(game) {
   });
 
   try {
-    const resp = await fetch(SS_API + '?' + params.toString(), {
+    const ssUrl = SS_API + '?' + params.toString();
+    const resp = await fetch(SS_CORS_PROXY + encodeURIComponent(ssUrl), {
       method: 'GET',
       signal: AbortSignal.timeout(10000),
     });
