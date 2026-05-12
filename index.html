@@ -1468,31 +1468,45 @@ async function driveLoad() {
 }
 
 async function driveSave(data) {
+  const token = gapi.client.getToken()?.access_token;
+  if (!token) throw new Error('No access token');
+
   const meta = { name: DRIVE_FILENAME };
   if (!driveFileId) meta.parents = ['appDataFolder'];
-  const boundary = 'p' + Math.random().toString(36).slice(2);
+
+  const boundary = 'ci' + Math.random().toString(36).slice(2);
   const body = [
     '--' + boundary,
     'Content-Type: application/json; charset=UTF-8',
     '',
     JSON.stringify(meta),
     '--' + boundary,
-    'Content-Type: application/json',
+    'Content-Type: application/json; charset=UTF-8',
     '',
     JSON.stringify(data),
     '--' + boundary + '--',
-    '',
   ].join('\r\n');
-  const res = await gapi.client.request({
-    path: driveFileId
-      ? '/upload/drive/v3/files/' + driveFileId
-      : '/upload/drive/v3/files',
+
+  const url = 'https://www.googleapis.com/upload/drive/v3/files'
+    + (driveFileId ? '/' + driveFileId : '')
+    + '?uploadType=multipart';
+
+  const resp = await fetch(url, {
     method: driveFileId ? 'PATCH' : 'POST',
-    params: { uploadType: 'multipart' },
-    headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'Content-Type': 'multipart/related; boundary=' + boundary,
+    },
     body,
   });
-  if (!driveFileId && res.result && res.result.id) driveFileId = res.result.id;
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error('Drive save ' + resp.status + ': ' + err.slice(0, 200));
+  }
+
+  const result = await resp.json();
+  if (!driveFileId && result.id) driveFileId = result.id;
 }
 
 // Debounced auto-save
