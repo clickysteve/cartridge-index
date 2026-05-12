@@ -1306,7 +1306,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.3.3';
+const APP_VERSION    = 'v0.3.4';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -1801,21 +1801,48 @@ function verifyImageUrl(url) {
 }
 
 // ── LIBRETRO THUMBNAILS ──────────────────────────────────
-// Libretro Named_Boxarts uses the FULL ROM name: "EarthBound (USA).png"
+// Tries multiple name variations because user ROMs may lack No-Intro region codes.
+// e.g. "10-Pin Bowling.gbc" needs to match "10-Pin Bowling (Europe).png"
+function encodeLibretroName(name) {
+  return name
+    .replace(/[&*`<>?\\|]/g, '_')
+    .replace(/\//g, '-')
+    .trim()
+    .split('').map(c => c === ' ' ? '%20' : c === '#' ? '%23' : c === '%' ? '%25' : c)
+    .join('');
+}
+
+async function findLibretroUrl(game) {
+  const sys = LIBRETRO_SYSTEMS[game.platform];
+  if (!sys) return null;
+  const base = 'https://raw.githubusercontent.com/libretro-thumbnails/' + sys + '/master/Named_Boxarts/';
+  const romBase = game.filename.replace(/\.[^.]+$/, '');
+
+  // Try exact filename first, then common No-Intro region suffixes
+  const variants = [
+    romBase,
+    romBase + ' (USA)',
+    romBase + ' (Europe)',
+    romBase + ' (USA, Europe)',
+    romBase + ' (World)',
+    romBase + ' (Japan)',
+    romBase + ' (USA) (En)',
+    romBase + ' (Europe) (En)',
+  ];
+
+  for (const v of variants) {
+    const url = base + encodeLibretroName(v) + '.png';
+    if (await verifyImageUrl(url)) return url;
+  }
+  return null;
+}
+
+// Keep sync version for backward compat (used only where we don't need verification)
 function libretroArtUrl(game) {
   const sys = LIBRETRO_SYSTEMS[game.platform];
   if (!sys) return null;
-  const romBase = game.filename.replace(/\.[^.]+$/, ''); // strip ext only
-  const safeName = romBase
-    .replace(/[&*`<>?\\|]/g, '_')
-    .replace(/\//g, '-')
-    .trim();
-  // encode spaces as %20, leave parens and other chars as-is for GitHub raw
-  const encoded = safeName.split('').map(c =>
-    c === ' ' ? '%20' : c === '#' ? '%23' : c === '%' ? '%25' : c
-  ).join('');
-  return 'https://raw.githubusercontent.com/libretro-thumbnails/'
-    + sys + '/master/Named_Boxarts/' + encoded + '.png';
+  return 'https://raw.githubusercontent.com/libretro-thumbnails/' + sys
+    + '/master/Named_Boxarts/' + encodeLibretroName(game.filename.replace(/\.[^.]+$/, '')) + '.png';
 }
 
 // ── ITCH.IO ART ──────────────────────────────────────────
@@ -1840,9 +1867,9 @@ async function itchArt(game) {
 async function enrichFallbackArt(game) {
   if (game.boxArt) return; // already has art
 
-  // Try libretro first (verify image loads before setting)
-  const libUrl = libretroArtUrl(game);
-  if (libUrl && await verifyImageUrl(libUrl)) { game.boxArt = libUrl; return; }
+  // Try libretro first (with region-variant fallback)
+  const libUrl = await findLibretroUrl(game);
+  if (libUrl) { game.boxArt = libUrl; return; }
 
   // Try itch.io (good for homebrew, also catches some retail misses)
   const itchUrl = await itchArt(game);
@@ -1851,10 +1878,10 @@ async function enrichFallbackArt(game) {
 
 // Enrich a single game: libretro first, then SS (for metadata), then itch.io
 async function enrichOneGame(game) {
-  // Always try libretro first — verify image loads before setting
+  // Always try libretro first (with region-variant fallback)
   if (!game.boxArt) {
-    const url = libretroArtUrl(game);
-    if (url && await verifyImageUrl(url)) game.boxArt = url;
+    const url = await findLibretroUrl(game);
+    if (url) game.boxArt = url;
   }
 
   // SS for metadata (and SS art if libretro missed)
@@ -1892,24 +1919,29 @@ async function enrichAll() {
   el('btn-enrich').disabled = true;
   let done = 0;
 
-  // ── Pass 1: libretro (verify image loads before committing URL) ──
+  // ── Pass 1: libretro — parallel batch lookup with region-variant fallback ──
+  // User ROMs often lack No-Intro region codes so we try several variants.
+  // Run in parallel batches of 10 for speed.
   let libretroHits = 0;
-  for (const game of needArt) {
-    showProgress('Libretro thumbnails… ' + done + '/' + needArt.length, Math.round(done / needArt.length * 100));
-    const url = libretroArtUrl(game);
-    if (url) {
-      const ok = await verifyImageUrl(url);
-      console.log('[CI] libretro ' + game.filename + ' →', ok ? '✓' : '✗ 404', url);
-      if (ok) { game.boxArt = url; libretroHits++; }
-    }
-    done++;
+  const BATCH = 10;
+  showProgress('Libretro thumbnails…', 0);
+  for (let i = 0; i < needArt.length; i += BATCH) {
+    const batch = needArt.slice(i, i + BATCH);
+    const urls = await Promise.all(batch.map(g => findLibretroUrl(g)));
+    urls.forEach((url, j) => {
+      const game = batch[j];
+      console.log('[CI] libretro', game.filename, '→', url || 'null');
+      if (url) { game.boxArt = url; libretroHits++; }
+    });
+    showProgress('Libretro thumbnails… ' + Math.min(i + BATCH, needArt.length) + '/' + needArt.length,
+      Math.round(Math.min(i + BATCH, needArt.length) / needArt.length * 100));
   }
   // Render immediately so art appears without waiting for SS/itch
   renderGames();
   scheduleSave();
 
   if (needArt.length > 0) {
-    toast('Pass 1: ' + libretroHits + '/' + needArt.length + ' libretro images loaded.', libretroHits > 0 ? 'ok' : 'err');
+    toast('Pass 1: ' + libretroHits + '/' + needArt.length + ' libretro images found.', libretroHits > 0 ? 'ok' : 'err');
   }
 
   // ── Pass 2: ScreenScraper (metadata + art for remainder) ──
