@@ -1,0 +1,2297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cartridge Index</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23fb923c'/><text x='16' y='22' font-size='18' text-anchor='middle' fill='white'>🎮</text></svg>" type="image/svg+xml">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js" async defer></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #0a0a0a;
+  --surface-1:  #141414;
+  --surface-2:  #1a1a1a;
+  --surface-3:  #222;
+  --border:     #2a2a2a;
+  --border-2:   #333;
+  --text:       #f0ede8;
+  --text-dim:   #888;
+  --text-muted: #555;
+  --accent:     #fb923c;
+  --accent-dim: rgba(251,146,60,.18);
+
+  /* platform colours */
+  --gb:   #22c55e;
+  --gbc:  #e879f9;
+  --gba:  #818cf8;
+  --nes:  #f87171;
+  --snes: #60a5fa;
+  --other:#94a3b8;
+
+  /* status colours */
+  --s-unplayed:  #4b5563;
+  --s-playing:   #fb923c;
+  --s-completed: #4ade80;
+  --s-dropped:   #f87171;
+}
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-x: hidden;
+}
+
+/* ── TOPBAR ─────────────────────────────────────── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  background: rgba(10,10,10,.96);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 52px;
+}
+
+.topbar-logo {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -.03em;
+  white-space: nowrap;
+  background: linear-gradient(135deg,#fb923c,#f59e0b);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  flex-shrink: 0;
+}
+
+.topbar-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Platform tabs */
+.platform-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.platform-tabs::-webkit-scrollbar { display: none; }
+
+.ptab {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all .15s;
+  letter-spacing: .02em;
+}
+.ptab:hover { background: var(--surface-2); color: var(--text); }
+.ptab.active { background: var(--surface-3); border-color: var(--border-2); color: var(--text); }
+.ptab[data-platform="gb"].active   { color: var(--gb);   border-color: var(--gb);   background: rgba(34,197,94,.12); }
+.ptab[data-platform="gbc"].active  { color: var(--gbc);  border-color: var(--gbc);  background: rgba(232,121,249,.12); }
+.ptab[data-platform="gba"].active  { color: var(--gba);  border-color: var(--gba);  background: rgba(129,140,248,.12); }
+.ptab[data-platform="nes"].active  { color: var(--nes);  border-color: var(--nes);  background: rgba(248,113,113,.12); }
+.ptab[data-platform="snes"].active { color: var(--snes); border-color: var(--snes); background: rgba(96,165,250,.12); }
+
+.topbar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Buttons */
+.btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--surface-3); border-color: #444; }
+.btn:active { opacity: .8; }
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+}
+.btn-primary:hover { background: #f97316; border-color: #f97316; }
+.btn-icon {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  font-size: 15px;
+}
+.btn[disabled] { opacity: .4; cursor: default; }
+
+/* Sync status */
+.sync-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.sync-status.ok    { color: #4ade80; }
+.sync-status.err   { color: #f87171; }
+.sync-status.syncing { color: var(--accent); }
+
+/* ── FILTERBAR ──────────────────────────────────── */
+.filterbar {
+  position: sticky;
+  top: 52px;
+  z-index: 190;
+  background: rgba(10,10,10,.94);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.status-filters {
+  display: flex;
+  gap: 4px;
+}
+
+.sfilt {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all .15s;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.sfilt:hover { background: var(--surface-2); }
+.sfilt.active { border-color: var(--border-2); background: var(--surface-2); color: var(--text); }
+.sfilt[data-status="playing"].active  { border-color: var(--s-playing);   color: var(--s-playing); }
+.sfilt[data-status="completed"].active{ border-color: var(--s-completed); color: var(--s-completed); }
+.sfilt[data-status="dropped"].active  { border-color: var(--s-dropped);   color: var(--s-dropped); }
+.sfilt[data-status="unplayed"].active { border-color: var(--s-unplayed);  color: #94a3b8; }
+
+.sfilt .sfilt-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .7;
+}
+.sfilt[data-status="all"] .sfilt-dot { display: none; }
+
+.filterbar-spacer { flex: 1; }
+
+.search-wrap {
+  position: relative;
+}
+.search-icon {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+#search-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 8px 5px 26px;
+  width: 180px;
+  outline: none;
+  transition: border-color .15s, width .2s;
+}
+#search-input:focus { border-color: var(--accent); width: 220px; }
+#search-input::placeholder { color: var(--text-muted); }
+
+.sort-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sort-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+#sort-select {
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+  cursor: pointer;
+}
+
+.view-toggle {
+  display: flex;
+  gap: 2px;
+}
+.vtog {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-muted);
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all .15s;
+}
+.vtog.active { background: var(--surface-2); border-color: var(--border-2); color: var(--text); }
+.vtog:hover:not(.active) { color: var(--text-dim); }
+
+/* ── MAIN ───────────────────────────────────────── */
+.main {
+  padding: 16px;
+  min-height: calc(100vh - 104px);
+}
+
+/* ── EMPTY STATE ────────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  text-align: center;
+  gap: 16px;
+}
+.empty-icon {
+  font-size: 64px;
+  opacity: .25;
+}
+.empty-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+.empty-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 320px;
+  line-height: 1.6;
+}
+
+/* ── GAME GRID ──────────────────────────────────── */
+.game-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(160px,48%), 1fr));
+  gap: 12px;
+}
+.game-grid.view-list {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+/* ── GAME CARD (grid view) ──────────────────────── */
+.game-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform .15s, border-color .15s, box-shadow .15s;
+  position: relative;
+}
+.game-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-2);
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+
+.card-art {
+  width: 100%;
+  aspect-ratio: 3/4;
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+.card-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.card-art-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+}
+.card-art-placeholder-icon {
+  font-size: 32px;
+  opacity: .2;
+}
+.card-art-placeholder-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  opacity: .4;
+}
+
+.card-platform-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0,0,0,.75);
+  backdrop-filter: blur(4px);
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  padding: 2px 5px;
+  text-transform: uppercase;
+}
+
+.card-status-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0,0,0,.5);
+}
+
+.card-hb-badge {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  background: rgba(251,146,60,.25);
+  border: 1px solid rgba(251,146,60,.5);
+  border-radius: 3px;
+  font-size: 8px;
+  font-weight: 800;
+  color: var(--accent);
+  padding: 1px 4px;
+  letter-spacing: .06em;
+}
+
+.card-info {
+  padding: 8px 10px;
+}
+.card-title {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-rating {
+  margin-top: 4px;
+  font-size: 10px;
+  letter-spacing: .05em;
+  color: #f59e0b;
+}
+
+/* ── GAME CARD (list view) ──────────────────────── */
+.view-list .game-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 7px;
+  padding: 8px 10px;
+}
+.view-list .card-art {
+  width: 36px;
+  height: 48px;
+  aspect-ratio: unset;
+  flex-shrink: 0;
+  border-radius: 4px;
+  font-size: 0;
+}
+.view-list .card-art-placeholder-icon { font-size: 18px; }
+.view-list .card-art-placeholder-label { display: none; }
+.view-list .card-platform-badge,
+.view-list .card-hb-badge { display: none; }
+.view-list .card-status-dot {
+  position: static;
+  flex-shrink: 0;
+  order: -1;
+}
+.view-list .card-info {
+  flex: 1;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.view-list .card-title {
+  flex: 1;
+  font-size: 13px;
+}
+.view-list .card-meta {
+  margin: 0;
+  flex-shrink: 0;
+}
+.view-list .card-rating {
+  margin: 0;
+  flex-shrink: 0;
+}
+.view-list-platform {
+  display: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.view-list .view-list-platform { display: block; }
+
+/* ── STATS VIEW ─────────────────────────────────── */
+.stats-view {
+  display: none;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 860px;
+}
+.stats-view.active { display: flex; }
+
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+.stat-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stat-card-value {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -.03em;
+  line-height: 1;
+}
+.stat-card-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.stat-card-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.stats-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+/* Platform bar chart */
+.platform-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.platform-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.platform-bar-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  width: 40px;
+  flex-shrink: 0;
+}
+.platform-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.platform-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width .4s ease;
+}
+.platform-bar-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Status donut (SVG-based) */
+.status-breakdown {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+.status-breakdown-inner {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.status-donut { flex-shrink: 0; }
+.status-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.status-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.status-legend-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-legend-label { color: var(--text-dim); flex: 1; min-width: 80px; }
+.status-legend-count { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.status-legend-pct   { color: var(--text-muted); font-size: 11px; min-width: 32px; text-align: right; }
+
+/* Backlog section */
+.backlog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+.backlog-item {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color .15s;
+}
+.backlog-item:hover { border-color: var(--border-2); }
+.backlog-item-title {
+  font-size: 12px;
+  font-weight: 600;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.backlog-item-platform {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  flex-shrink: 0;
+}
+
+/* ── MODALS ─────────────────────────────────────── */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.75);
+  backdrop-filter: blur(4px);
+  z-index: 500;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.modal-overlay.open { display: flex; }
+
+.modal {
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(0,0,0,.6);
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-art {
+  width: 64px;
+  height: 86px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  opacity: .4;
+}
+.modal-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.modal-header-info {
+  flex: 1;
+  min-width: 0;
+}
+.modal-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  line-height: 1.2;
+  margin-bottom: 6px;
+}
+.modal-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+.badge-hb {
+  background: rgba(251,146,60,.15);
+  border-color: rgba(251,146,60,.4);
+  color: var(--accent);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  flex-shrink: 0;
+  margin-top: -2px;
+}
+.modal-close:hover { color: var(--text); }
+
+.modal-body {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.modal-meta-item {
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.modal-meta-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: 2px;
+}
+.modal-meta-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.field-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  font-weight: 600;
+  letter-spacing: .04em;
+}
+
+/* Status picker */
+.status-picker {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.status-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: 7px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: all .15s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.status-btn .sdot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+}
+.status-btn:hover { background: var(--surface-3); }
+.status-btn.active[data-s="unplayed"]  { border-color: var(--s-unplayed);  color: #94a3b8; background: rgba(75,85,99,.2); }
+.status-btn.active[data-s="playing"]   { border-color: var(--s-playing);   color: var(--s-playing); background: rgba(251,146,60,.12); }
+.status-btn.active[data-s="completed"] { border-color: var(--s-completed); color: var(--s-completed); background: rgba(74,222,128,.12); }
+.status-btn.active[data-s="dropped"]   { border-color: var(--s-dropped);   color: var(--s-dropped); background: rgba(248,113,113,.12); }
+
+/* Star rating */
+.star-rating {
+  display: flex;
+  gap: 4px;
+}
+.star {
+  background: none;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+  padding: 0;
+  color: var(--border-2);
+  transition: color .1s, transform .1s;
+  line-height: 1;
+}
+.star:hover, .star.lit { color: #f59e0b; }
+.star:hover { transform: scale(1.15); }
+
+/* Notes textarea */
+.notes-area {
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  padding: 9px 12px;
+  resize: vertical;
+  min-height: 80px;
+  width: 100%;
+  outline: none;
+  transition: border-color .15s;
+}
+.notes-area:focus { border-color: var(--accent); }
+.notes-area::placeholder { color: var(--text-muted); }
+
+.modal-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── SETTINGS MODAL ─────────────────────────────── */
+.settings-modal {
+  max-width: 460px;
+}
+.settings-section {
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: .04em;
+  margin-bottom: 2px;
+}
+.field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.field-input {
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 7px 10px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .15s;
+  width: 100%;
+}
+.field-input:focus { border-color: var(--accent); }
+.field-input::placeholder { color: var(--text-muted); }
+.field-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.field-hint a { color: var(--accent); }
+
+.settings-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0 -14px;
+}
+
+/* ── AUTH OVERLAY ───────────────────────────────── */
+.auth-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 900;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+  text-align: center;
+  padding: 32px;
+}
+.auth-overlay.open { display: flex; }
+
+.auth-logo {
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: -.04em;
+  background: linear-gradient(135deg,#fb923c,#f59e0b);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-bottom: 4px;
+}
+.auth-title {
+  font-size: 15px;
+  color: var(--text-dim);
+  max-width: 320px;
+}
+.auth-warn {
+  font-size: 12px;
+  color: #f87171;
+  background: rgba(248,113,113,.1);
+  border: 1px solid rgba(248,113,113,.3);
+  border-radius: 7px;
+  padding: 10px 14px;
+  max-width: 360px;
+}
+
+/* ── PROGRESS BAR ───────────────────────────────── */
+.progress-bar-wrap {
+  display: none;
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  padding: 12px 18px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  z-index: 400;
+  min-width: 260px;
+  max-width: 380px;
+}
+.progress-bar-wrap.open { display: block; }
+.progress-bar-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.progress-bar-track {
+  background: var(--surface-3);
+  border-radius: 4px;
+  height: 6px;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg,#fb923c,#f59e0b);
+  border-radius: 4px;
+  transition: width .2s;
+}
+
+/* ── TOAST ──────────────────────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+  z-index: 600;
+  transform: translateY(80px);
+  opacity: 0;
+  transition: all .2s;
+  max-width: 280px;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.ok  { border-color: rgba(74,222,128,.4); }
+.toast.err { border-color: rgba(248,113,113,.4); color: #f87171; }
+
+/* ── MISC ───────────────────────────────────────── */
+.no-results {
+  display: none;
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.no-results.show { display: block; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #444; }
+</style>
+</head>
+<body>
+
+<!-- ── TOPBAR ── -->
+<header class="topbar">
+  <div class="topbar-logo">Cartridge Index</div>
+  <span class="topbar-count" id="topbar-count"></span>
+
+  <div class="platform-tabs" id="platform-tabs">
+    <button class="ptab active" data-platform="all">All</button>
+    <button class="ptab" data-platform="gba">GBA</button>
+    <button class="ptab" data-platform="gb">GB</button>
+    <button class="ptab" data-platform="gbc">GBC</button>
+    <button class="ptab" data-platform="snes">SNES</button>
+    <button class="ptab" data-platform="nes">NES</button>
+    <button class="ptab" data-platform="other">Other</button>
+  </div>
+
+  <div class="topbar-actions">
+    <span class="sync-status" id="sync-status"></span>
+    <button class="btn btn-primary" id="btn-scan">Scan Pocket</button>
+    <button class="btn" id="btn-enrich" title="Fetch metadata from ScreenScraper" disabled>Enrich</button>
+    <button class="btn btn-icon" id="btn-settings" title="Settings">⚙</button>
+  </div>
+</header>
+
+<!-- ── FILTERBAR ── -->
+<div class="filterbar">
+  <div class="status-filters" id="status-filters">
+    <button class="sfilt active" data-status="all">All</button>
+    <button class="sfilt" data-status="unplayed"><span class="sfilt-dot"></span>Unplayed</button>
+    <button class="sfilt" data-status="playing"><span class="sfilt-dot"></span>Playing</button>
+    <button class="sfilt" data-status="completed"><span class="sfilt-dot"></span>Completed</button>
+    <button class="sfilt" data-status="dropped"><span class="sfilt-dot"></span>Dropped</button>
+  </div>
+
+  <div class="filterbar-spacer"></div>
+
+  <div class="sort-wrap">
+    <span class="sort-label">Sort</span>
+    <select id="sort-select">
+      <option value="title">Title A–Z</option>
+      <option value="title-desc">Title Z–A</option>
+      <option value="platform">Platform</option>
+      <option value="year">Year</option>
+      <option value="status">Status</option>
+      <option value="dateAdded">Date Added</option>
+      <option value="rating">Rating</option>
+    </select>
+  </div>
+
+  <div class="search-wrap">
+    <span class="search-icon">⌕</span>
+    <input type="text" id="search-input" placeholder="Search…" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="view-toggle">
+    <button class="vtog active" data-view="grid" title="Grid view">⊞</button>
+    <button class="vtog" data-view="list" title="List view">☰</button>
+    <button class="vtog" data-view="stats" title="Stats">◑</button>
+  </div>
+</div>
+
+<!-- ── MAIN ── -->
+<main class="main" id="main">
+  <!-- Empty state -->
+  <div class="empty-state" id="empty-state">
+    <div class="empty-icon">🎮</div>
+    <div class="empty-title">No games yet</div>
+    <div class="empty-sub">Connect your Analogue Pocket SD card and hit <strong>Scan Pocket</strong> to import your library. Then hit <strong>Enrich</strong> to pull box art and metadata from ScreenScraper. Your data is saved to Google Drive.</div>
+  </div>
+
+  <!-- No results -->
+  <div class="no-results" id="no-results">No games match your filters.</div>
+
+  <!-- Game grid -->
+  <div class="game-grid" id="game-grid"></div>
+
+  <!-- Stats view -->
+  <div class="stats-view" id="stats-view">
+    <div>
+      <div class="stats-section-title">Overview</div>
+      <div class="stats-row" id="stats-kpis"></div>
+    </div>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+      <div style="flex:1;min-width:220px">
+        <div class="stats-section-title">By Platform</div>
+        <div class="platform-bars" id="stats-platforms"></div>
+      </div>
+      <div style="flex:1;min-width:240px">
+        <div class="stats-section-title">Status Breakdown</div>
+        <div class="status-breakdown" id="stats-status"></div>
+      </div>
+    </div>
+    <div id="stats-backlog-section">
+      <div class="stats-section-title">Backlog Picks <span style="color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0">(random unplayed)</span></div>
+      <div class="backlog-grid" id="stats-backlog"></div>
+    </div>
+  </div>
+</main>
+
+<!-- ── GAME DETAIL MODAL ── -->
+<div class="modal-overlay" id="game-modal">
+  <div class="modal" id="game-modal-inner">
+    <div class="modal-header">
+      <div class="modal-art" id="modal-art">🎮</div>
+      <div class="modal-header-info">
+        <div class="modal-title" id="modal-title">Game Title</div>
+        <div class="modal-badges" id="modal-badges"></div>
+      </div>
+      <button class="modal-close" id="modal-close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-meta-grid" id="modal-meta-grid"></div>
+
+      <div>
+        <div class="field-label">Status</div>
+        <div class="status-picker" id="modal-status-picker">
+          <button class="status-btn" data-s="unplayed"><span class="sdot" style="background:var(--s-unplayed)"></span>Unplayed</button>
+          <button class="status-btn" data-s="playing"><span class="sdot" style="background:var(--s-playing)"></span>Playing</button>
+          <button class="status-btn" data-s="completed"><span class="sdot" style="background:var(--s-completed)"></span>Completed</button>
+          <button class="status-btn" data-s="dropped"><span class="sdot" style="background:var(--s-dropped)"></span>Dropped</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="field-label">Rating</div>
+        <div class="star-rating" id="modal-stars">
+          <button class="star" data-v="1">★</button>
+          <button class="star" data-v="2">★</button>
+          <button class="star" data-v="3">★</button>
+          <button class="star" data-v="4">★</button>
+          <button class="star" data-v="5">★</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="field-label">Notes</div>
+        <textarea class="notes-area" id="modal-notes" placeholder="Any notes, thoughts, passwords…"></textarea>
+      </div>
+
+      <div id="modal-filename-row">
+        <div class="field-label">Filename</div>
+        <div id="modal-filename" style="font-size:11px;color:var(--text-muted);font-family:monospace;word-break:break-all;"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="modal-delete" style="color:#f87171;margin-right:auto;">Remove</button>
+      <button class="btn" id="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="modal-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── SETTINGS MODAL ── -->
+<div class="modal-overlay" id="settings-modal">
+  <div class="modal settings-modal">
+    <div class="modal-header" style="align-items:center">
+      <div style="flex:1">
+        <div class="modal-title" style="font-size:16px">Settings</div>
+      </div>
+      <button class="modal-close" id="settings-close">×</button>
+    </div>
+    <div class="modal-body" style="gap:14px">
+
+      <div class="settings-section">
+        <div class="settings-section-title">ScreenScraper — Metadata & Box Art</div>
+        <div class="field-row">
+          <div class="field-label">Username</div>
+          <input class="field-input" id="ss-user" type="text" placeholder="Your ScreenScraper username" autocomplete="off">
+        </div>
+        <div class="field-row">
+          <div class="field-label">Password</div>
+          <input class="field-input" id="ss-pass" type="password" placeholder="Your ScreenScraper password" autocomplete="off">
+        </div>
+        <div class="settings-divider"></div>
+        <div class="field-row">
+          <div class="field-label">Developer ID <span style="color:var(--text-muted);font-weight:400">(optional — improves rate limits)</span></div>
+          <input class="field-input" id="ss-devid" type="text" placeholder="Your SS devid (leave blank to use guest)">
+        </div>
+        <div class="field-row">
+          <div class="field-label">Developer Password <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
+          <input class="field-input" id="ss-devpass" type="password" placeholder="Your SS devpassword">
+        </div>
+        <div class="field-hint">
+          No developer account yet? <a href="https://www.screenscraper.fr/index.php?action=developers" target="_blank">Register at screenscraper.fr</a> — free, approved quickly.
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Google Drive — Sync</div>
+        <div id="settings-drive-status" style="font-size:12px;color:var(--text-dim)">Checking…</div>
+        <button class="btn" id="settings-signout" style="width:fit-content">Sign out</button>
+      </div>
+
+      <div class="settings-section" style="gap:6px">
+        <div class="settings-section-title">About</div>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
+          Cartridge Index <span id="app-version">v0.1.0</span><br>
+          Reads from Analogue Pocket SD card via File System Access API.<br>
+          Metadata from <a href="https://www.screenscraper.fr" target="_blank" style="color:var(--accent)">ScreenScraper</a>.<br>
+          Library synced to Google Drive appdata.
+        </div>
+        <button class="btn" id="settings-clear-data" style="width:fit-content;color:#f87171;margin-top:4px">Clear all game data</button>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="settings-cancel">Cancel</button>
+      <button class="btn btn-primary" id="settings-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── AUTH OVERLAY ── -->
+<div class="auth-overlay" id="auth-overlay">
+  <div class="auth-logo">Cartridge Index</div>
+  <div class="auth-title">Sign in with Google to sync your library across devices.</div>
+  <div class="auth-warn" id="auth-warn" style="display:none">
+    OAuth client ID not configured. Open <code>index.html</code> and replace <code>YOUR_CLIENT_ID</code>.
+  </div>
+  <button class="btn btn-primary" id="auth-signin-btn" style="padding:10px 24px;font-size:14px">Sign in with Google</button>
+  <div class="sync-status" id="auth-status"></div>
+</div>
+
+<!-- ── PROGRESS BAR ── -->
+<div class="progress-bar-wrap" id="progress-wrap">
+  <div class="progress-bar-label" id="progress-label">Fetching metadata…</div>
+  <div class="progress-bar-track">
+    <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+  </div>
+</div>
+
+<!-- ── TOAST ── -->
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   CARTRIDGE INDEX — v0.1.0
+   github.com/clickysteve/cartridge-index
+   games.clickysteve.com
+═══════════════════════════════════════════════════════════ */
+(function () {
+'use strict';
+
+// ── CONFIG ──────────────────────────────────────────────
+const APP_VERSION    = 'v0.1.0';
+const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
+const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
+const DRIVE_FILENAME = 'cartridge-index-state.json';
+const TOKEN_KEY      = 'cartridge:gtoken:v1';
+const SS_CREDS_KEY   = 'cartridge:ss:creds:v1';
+
+const SS_API   = 'https://www.screenscraper.fr/api2/jeuInfos.php';
+const SS_SYSTEMS = { gb: 9, gbc: 10, gba: 12, nes: 3, snes: 4 };
+
+const PLATFORMS = {
+  gb:    { label: 'GB',   color: '#22c55e', exts: ['.gb']         },
+  gbc:   { label: 'GBC',  color: '#e879f9', exts: ['.gbc']        },
+  gba:   { label: 'GBA',  color: '#818cf8', exts: ['.gba']        },
+  nes:   { label: 'NES',  color: '#f87171', exts: ['.nes']        },
+  snes:  { label: 'SNES', color: '#60a5fa', exts: ['.sfc','.smc'] },
+  other: { label: '?',    color: '#94a3b8', exts: []              },
+};
+
+const STATUS_COLORS = {
+  unplayed:  '#4b5563',
+  playing:   '#fb923c',
+  completed: '#4ade80',
+  dropped:   '#f87171',
+};
+
+const STATUS_ORDER = ['unplayed','playing','completed','dropped'];
+
+// ── STATE ────────────────────────────────────────────────
+let library = { games: [], lastSync: null, version: 1 };
+let driveFileId = null;
+let isSyncing = false;
+let gapiReady = false;
+
+let ui = {
+  platform: 'all',
+  status:   'all',
+  sort:     'title',
+  search:   '',
+  view:     'grid',
+};
+
+let activeGameId = null; // id of game open in modal
+
+// ── HELPERS ──────────────────────────────────────────────
+function el(id) { return document.getElementById(id); }
+
+function platformFromExt(filename) {
+  const lower = filename.toLowerCase();
+  for (const [key, def] of Object.entries(PLATFORMS)) {
+    if (key === 'other') continue;
+    if (def.exts.some(e => lower.endsWith(e))) return key;
+  }
+  return 'other';
+}
+
+function cleanTitle(filename) {
+  return filename
+    .replace(/\.[^.]+$/, '')              // strip extension
+    .replace(/\s*[\(\[{][^\)\]\}]*[\)\]\}]/g, '') // remove (USA), [!], {Rev 1} etc.
+    .replace(/\s*-\s*(Rev\s*\w+|v[\d.]+|Disc\s*\d+)$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function gameId(platform, filename) {
+  // simple stable id from platform + filename
+  const str = platform + ':' + filename.toLowerCase();
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function waitFor(fn, interval = 200) {
+  return new Promise(res => {
+    const t = setInterval(() => { if (fn()) { clearInterval(t); res(); } }, interval);
+  });
+}
+
+// ── TOAST ────────────────────────────────────────────────
+let toastTimer;
+function toast(msg, kind = '') {
+  const t = el('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (kind ? ' ' + kind : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 3000);
+}
+
+// ── PROGRESS ─────────────────────────────────────────────
+function showProgress(label, pct) {
+  el('progress-wrap').classList.add('open');
+  el('progress-label').textContent = label;
+  el('progress-fill').style.width = pct + '%';
+}
+function hideProgress() { el('progress-wrap').classList.remove('open'); }
+
+// ── SYNC STATUS ──────────────────────────────────────────
+function setSyncStatus(text, kind = '') {
+  const s = el('sync-status');
+  s.textContent = text;
+  s.className = 'sync-status' + (kind ? ' ' + kind : '');
+}
+
+// ── GOOGLE AUTH & DRIVE ──────────────────────────────────
+function loadStoredToken() {
+  try {
+    const raw = localStorage.getItem(TOKEN_KEY);
+    if (!raw) return null;
+    const t = JSON.parse(raw);
+    if (Date.now() > t.expiresAt) { localStorage.removeItem(TOKEN_KEY); return null; }
+    return t;
+  } catch { return null; }
+}
+function saveStoredToken(token, expiresIn) {
+  localStorage.setItem(TOKEN_KEY, JSON.stringify({
+    accessToken: token,
+    expiresAt: Date.now() + (expiresIn - 60) * 1000,
+  }));
+}
+function clearStoredToken() { localStorage.removeItem(TOKEN_KEY); }
+
+async function initGapi() {
+  await waitFor(() => typeof gapi !== 'undefined');
+  await new Promise(res => gapi.load('client', res));
+  await gapi.client.init({
+    discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
+  });
+  gapiReady = true;
+}
+
+let tokenClient;
+function makeTokenClient(onSuccess, onError) {
+  return google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: SCOPE,
+    callback: resp => {
+      if (resp && resp.access_token) {
+        saveStoredToken(resp.access_token, resp.expires_in || 3600);
+        gapi.client.setToken({ access_token: resp.access_token });
+        onSuccess();
+      } else {
+        onError && onError(resp);
+      }
+    },
+  });
+}
+
+// ── DRIVE FILE OPS ───────────────────────────────────────
+async function driveFindFile() {
+  const r = await gapi.client.drive.files.list({
+    spaces: 'appDataFolder',
+    fields: 'files(id,name,modifiedTime)',
+    q: "name = '" + DRIVE_FILENAME + "'",
+    pageSize: 5,
+  });
+  const f = (r.result.files || [])[0];
+  driveFileId = f ? f.id : null;
+  return f || null;
+}
+
+async function driveLoad() {
+  const f = await driveFindFile();
+  if (!f) return null;
+  const r = await gapi.client.drive.files.get({ fileId: f.id, alt: 'media' });
+  try {
+    return typeof r.body === 'string' ? JSON.parse(r.body) : r.body;
+  } catch { return null; }
+}
+
+async function driveSave(data) {
+  const meta = { name: DRIVE_FILENAME };
+  if (!driveFileId) meta.parents = ['appDataFolder'];
+  const boundary = 'p' + Math.random().toString(36).slice(2);
+  const body = [
+    '--' + boundary,
+    'Content-Type: application/json; charset=UTF-8',
+    '',
+    JSON.stringify(meta),
+    '--' + boundary,
+    'Content-Type: application/json',
+    '',
+    JSON.stringify(data),
+    '--' + boundary + '--',
+    '',
+  ].join('\r\n');
+  const res = await gapi.client.request({
+    path: driveFileId
+      ? '/upload/drive/v3/files/' + driveFileId
+      : '/upload/drive/v3/files',
+    method: driveFileId ? 'PATCH' : 'POST',
+    params: { uploadType: 'multipart' },
+    headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
+    body,
+  });
+  if (!driveFileId && res.result && res.result.id) driveFileId = res.result.id;
+}
+
+// Debounced auto-save
+let saveTimer;
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  setSyncStatus('Pending…');
+  saveTimer = setTimeout(async () => {
+    if (isSyncing) return;
+    isSyncing = true;
+    setSyncStatus('Saving…', 'syncing');
+    try {
+      await driveSave(library);
+      const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setSyncStatus('Synced ' + t, 'ok');
+    } catch (e) {
+      console.warn('[pocket] drive save failed', e);
+      setSyncStatus('Sync failed', 'err');
+    } finally {
+      isSyncing = false;
+    }
+  }, 2000);
+}
+
+// ── POCKET SCANNER ───────────────────────────────────────
+async function scanPocket() {
+  if (!('showDirectoryPicker' in window)) {
+    toast('File System Access API not supported. Use Chrome or Edge.', 'err');
+    return;
+  }
+
+  let root;
+  try {
+    root = await window.showDirectoryPicker({ mode: 'read' });
+  } catch (e) {
+    if (e.name !== 'AbortError') toast('Could not open folder: ' + e.message, 'err');
+    return;
+  }
+
+  toast('Scanning SD card…');
+  showProgress('Scanning SD card…', 10);
+
+  let assetsDir;
+  try {
+    assetsDir = await root.getDirectoryHandle('Assets', { create: false });
+  } catch {
+    // Try finding it in subdirectories (some users may navigate to Assets directly)
+    assetsDir = root;
+  }
+
+  const found = [];
+  await walkDir(assetsDir, found, '');
+
+  hideProgress();
+
+  if (found.length === 0) {
+    toast('No ROM files found. Make sure you selected your SD card root (or Assets folder).', 'err');
+    return;
+  }
+
+  // Merge into library: add new, keep existing user data (status/notes/rating)
+  const existingMap = new Map(library.games.map(g => [g.id, g]));
+  let addedCount = 0;
+
+  for (const { filename, platform } of found) {
+    const id = gameId(platform, filename);
+    if (!existingMap.has(id)) {
+      existingMap.set(id, {
+        id,
+        filename,
+        platform,
+        source: 'pocket',
+        title: cleanTitle(filename),
+        boxArt: null,
+        year: null,
+        genre: null,
+        developer: null,
+        publisher: null,
+        players: null,
+        ssId: null,
+        homebrew: false,
+        ssAttempted: false,
+        status: 'unplayed',
+        rating: null,
+        notes: '',
+        dateAdded: new Date().toISOString().slice(0, 10),
+        lastPlayed: null,
+      });
+      addedCount++;
+    }
+  }
+
+  library.games = [...existingMap.values()];
+  library.lastSync = new Date().toISOString();
+  library.sources = ['pocket'];
+
+  renderGames();
+  scheduleSave();
+  toast(addedCount > 0
+    ? addedCount + ' new game' + (addedCount !== 1 ? 's' : '') + ' added (' + library.games.length + ' total)'
+    : 'Library up to date — ' + library.games.length + ' games', 'ok');
+
+  // Enable enrich button
+  el('btn-enrich').disabled = false;
+}
+
+async function walkDir(dirHandle, results, path) {
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (handle.kind === 'directory') {
+      await walkDir(handle, results, path + name + '/');
+    } else if (handle.kind === 'file') {
+      const platform = platformFromExt(name);
+      if (platform !== 'other' || name.toLowerCase().match(/\.(gb|gbc|gba|nes|sfc|smc|pce|gbc|n64|nds)$/)) {
+        results.push({ filename: name, platform, path: path + name });
+      }
+    }
+  }
+}
+
+// ── SCREENSCRAPER ────────────────────────────────────────
+function getSsCreds() {
+  try {
+    return JSON.parse(localStorage.getItem(SS_CREDS_KEY) || '{}');
+  } catch { return {}; }
+}
+function saveSsCreds(c) { localStorage.setItem(SS_CREDS_KEY, JSON.stringify(c)); }
+
+async function enrichGame(game) {
+  const creds = getSsCreds();
+  if (!creds.user || !creds.pass) return false;
+
+  const sysId = SS_SYSTEMS[game.platform];
+  if (!sysId) { game.ssAttempted = true; return false; }
+
+  const params = new URLSearchParams({
+    devid:      creds.devid   || '0',
+    devpassword:creds.devpass || '0',
+    softname:   'pocket-collection',
+    output:     'json',
+    ssid:       creds.user,
+    sspassword: creds.pass,
+    systemeid:  sysId,
+    romnom:     game.filename,
+  });
+
+  try {
+    const resp = await fetch(SS_API + '?' + params.toString(), {
+      method: 'GET',
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!resp.ok) {
+      // Handle rate limit (HTTP 430) or quota (HTTP 431)
+      if (resp.status === 430 || resp.status === 431) {
+        toast('ScreenScraper rate limit hit — try again later.', 'err');
+        return null; // signal to stop enrichment loop
+      }
+      game.ssAttempted = true;
+      return false;
+    }
+
+    const data = await resp.json();
+    const jeu = data?.response?.jeu;
+
+    if (!jeu) {
+      game.ssAttempted = true;
+      game.homebrew = true;
+      return false;
+    }
+
+    // Parse title
+    const preferredRegions = ['us', 'eu', 'wor', 'ss'];
+    const nameObj = jeu.noms?.find(n => preferredRegions.includes(n.region?.toLowerCase()))
+      || jeu.noms?.[0];
+    if (nameObj?.text) game.title = nameObj.text;
+
+    // Parse year
+    const dateObj = jeu.dates?.find(d => preferredRegions.includes(d.region?.toLowerCase()))
+      || jeu.dates?.[0];
+    if (dateObj?.text) game.year = dateObj.text.slice(0, 4);
+
+    // Parse genre
+    const genreObj = jeu.genres?.[0]?.noms?.find(n => n.langue === 'en')
+      || jeu.genres?.[0]?.noms?.[0];
+    if (genreObj?.text) game.genre = genreObj.text;
+
+    // Parse developer / publisher
+    if (jeu.developpeur?.text) game.developer = jeu.developpeur.text;
+    if (jeu.editeur?.text)     game.publisher  = jeu.editeur.text;
+    if (jeu.joueurs?.text)     game.players    = jeu.joueurs.text;
+
+    // Parse box art URL
+    const boxMedia = jeu.medias?.find(m =>
+      m.type === 'box-2D' && preferredRegions.includes(m.region?.toLowerCase())
+    ) || jeu.medias?.find(m => m.type === 'box-2D');
+    if (boxMedia?.url) game.boxArt = boxMedia.url;
+
+    game.ssId = jeu.id || null;
+    game.ssAttempted = true;
+    return true;
+
+  } catch (e) {
+    if (e.name === 'TypeError' && e.message.includes('CORS')) {
+      toast('ScreenScraper CORS error — a proxy may be needed. Check console.', 'err');
+      console.warn('[pocket] ScreenScraper CORS error:', e);
+      return null; // signal to stop
+    }
+    console.warn('[pocket] SS fetch error:', e);
+    game.ssAttempted = true;
+    return false;
+  }
+}
+
+async function enrichAll() {
+  const creds = getSsCreds();
+  if (!creds.user || !creds.pass) {
+    toast('Add ScreenScraper credentials in Settings first.', 'err');
+    el('settings-modal').classList.add('open');
+    return;
+  }
+
+  const toEnrich = library.games.filter(g => !g.ssAttempted && g.platform !== 'other');
+  if (toEnrich.length === 0) {
+    toast('All games already enriched.', 'ok');
+    return;
+  }
+
+  el('btn-enrich').disabled = true;
+  let done = 0;
+
+  for (const game of toEnrich) {
+    showProgress('Fetching metadata… ' + done + '/' + toEnrich.length, Math.round(done / toEnrich.length * 100));
+    const result = await enrichGame(game);
+    if (result === null) break; // rate limit / CORS — stop
+    done++;
+    // Small delay to be polite to SS servers
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  hideProgress();
+  renderGames();
+  scheduleSave();
+  el('btn-enrich').disabled = false;
+  toast(done + ' games enriched.', 'ok');
+}
+
+// ── RENDERING ────────────────────────────────────────────
+function getFilteredGames() {
+  let games = [...library.games];
+
+  if (ui.platform !== 'all') {
+    games = games.filter(g => g.platform === ui.platform);
+  }
+  if (ui.status !== 'all') {
+    games = games.filter(g => g.status === ui.status);
+  }
+  if (ui.search) {
+    const q = ui.search.toLowerCase();
+    games = games.filter(g =>
+      g.title.toLowerCase().includes(q) ||
+      g.filename.toLowerCase().includes(q) ||
+      (g.developer || '').toLowerCase().includes(q) ||
+      (g.genre || '').toLowerCase().includes(q)
+    );
+  }
+
+  const STATUS_RANK = { playing: 0, unplayed: 1, completed: 2, dropped: 3 };
+  games.sort((a, b) => {
+    switch (ui.sort) {
+      case 'title':      return a.title.localeCompare(b.title);
+      case 'title-desc': return b.title.localeCompare(a.title);
+      case 'platform':   return a.platform.localeCompare(b.platform) || a.title.localeCompare(b.title);
+      case 'year':       return (b.year || '0').localeCompare(a.year || '0');
+      case 'status':     return (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9);
+      case 'dateAdded':  return (b.dateAdded || '').localeCompare(a.dateAdded || '');
+      case 'rating':     return (b.rating || 0) - (a.rating || 0);
+      default:           return 0;
+    }
+  });
+
+  return games;
+}
+
+function renderGames() {
+  const grid = el('game-grid');
+  const statsView = el('stats-view');
+  const emptyState = el('empty-state');
+  const noResults = el('no-results');
+
+  // Update count badge
+  const total = library.games.length;
+  el('topbar-count').textContent = total ? total + ' games' : '';
+
+  // Update platform tab counts
+  document.querySelectorAll('.ptab').forEach(tab => {
+    const p = tab.dataset.platform;
+    const count = p === 'all'
+      ? total
+      : library.games.filter(g => g.platform === p).length;
+    const label = PLATFORMS[p]?.label || 'All';
+    tab.textContent = p === 'all' ? 'All' : label + (count ? ' ' + count : '');
+    if (count === 0 && p !== 'all') tab.style.opacity = '.4';
+    else tab.style.opacity = '';
+  });
+
+  // Handle stats view
+  if (ui.view === 'stats') {
+    grid.style.display = 'none';
+    statsView.classList.add('active');
+    emptyState.style.display = 'none';
+    noResults.classList.remove('show');
+    renderStats();
+    return;
+  }
+
+  statsView.classList.remove('active');
+  grid.style.display = '';
+
+  if (total === 0) {
+    emptyState.style.display = '';
+    grid.innerHTML = '';
+    noResults.classList.remove('show');
+    return;
+  }
+
+  emptyState.style.display = 'none';
+  grid.className = 'game-grid' + (ui.view === 'list' ? ' view-list' : '');
+
+  const games = getFilteredGames();
+
+  if (games.length === 0) {
+    grid.innerHTML = '';
+    noResults.classList.add('show');
+    return;
+  }
+  noResults.classList.remove('show');
+
+  grid.innerHTML = games.map(g => cardHTML(g)).join('');
+
+  // Attach click listeners
+  grid.querySelectorAll('.game-card').forEach(card => {
+    card.addEventListener('click', () => openGameModal(card.dataset.id));
+  });
+}
+
+function cardHTML(g) {
+  const plat = PLATFORMS[g.platform] || PLATFORMS.other;
+  const statusColor = STATUS_COLORS[g.status] || '#444';
+  const stars = g.rating ? '★'.repeat(g.rating) + '☆'.repeat(5 - g.rating) : '';
+
+  const artHTML = g.boxArt
+    ? `<img src="${g.boxArt}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-art-placeholder\\'><div class=\\'card-art-placeholder-icon\\'>🎮</div><div class=\\'card-art-placeholder-label\\'>${plat.label}</div></div>'">`
+    : `<div class="card-art-placeholder"><div class="card-art-placeholder-icon">🎮</div><div class="card-art-placeholder-label">${plat.label}</div></div>`;
+
+  const platformBadge = `<div class="card-platform-badge" style="color:${plat.color}">${plat.label}</div>`;
+  const statusDot     = `<div class="card-status-dot" style="background:${statusColor}"></div>`;
+  const hbBadge       = g.homebrew ? '<div class="card-hb-badge">HB</div>' : '';
+
+  // List-view platform chip
+  const listPlat = `<div class="view-list-platform" style="color:${plat.color};background:${plat.color}1a">${plat.label}</div>`;
+
+  const meta = [g.year, g.developer].filter(Boolean).join(' · ');
+
+  return `<div class="game-card" data-id="${g.id}">
+    <div class="card-art">
+      ${artHTML}
+      ${platformBadge}
+      ${statusDot}
+      ${hbBadge}
+    </div>
+    <div class="card-info">
+      ${listPlat}
+      <div class="card-title">${escHtml(g.title)}</div>
+      ${meta ? `<div class="card-meta">${escHtml(meta)}</div>` : ''}
+      ${stars ? `<div class="card-rating">${stars}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── STATS ────────────────────────────────────────────────
+function renderStats() {
+  const games = library.games;
+  const total = games.length;
+
+  // KPIs
+  const statusCounts = { unplayed: 0, playing: 0, completed: 0, dropped: 0 };
+  games.forEach(g => { statusCounts[g.status] = (statusCounts[g.status] || 0) + 1; });
+
+  const completionRate = total > 0
+    ? Math.round(statusCounts.completed / (total - statusCounts.dropped || 1) * 100)
+    : 0;
+
+  el('stats-kpis').innerHTML = [
+    { value: total, label: 'Total Games', sub: library.lastSync ? 'Last scan ' + library.lastSync.slice(0, 10) : '', color: 'var(--accent)' },
+    { value: statusCounts.playing,   label: 'Playing',    color: STATUS_COLORS.playing },
+    { value: statusCounts.unplayed,  label: 'Backlog',    sub: 'Unplayed', color: STATUS_COLORS.unplayed },
+    { value: statusCounts.completed, label: 'Completed',  color: STATUS_COLORS.completed },
+    { value: completionRate + '%',   label: 'Completion', sub: 'Excl. dropped', color: STATUS_COLORS.completed },
+    { value: statusCounts.dropped,   label: 'Dropped',    color: STATUS_COLORS.dropped },
+  ].map(k => `<div class="stat-card">
+    <div class="stat-card-value" style="color:${k.color}">${k.value}</div>
+    <div class="stat-card-label">${k.label}</div>
+    ${k.sub ? `<div class="stat-card-sub">${k.sub}</div>` : ''}
+  </div>`).join('');
+
+  // Platform bars
+  const platCounts = {};
+  games.forEach(g => { platCounts[g.platform] = (platCounts[g.platform] || 0) + 1; });
+  const maxPlat = Math.max(...Object.values(platCounts), 1);
+  const platOrder = Object.keys(PLATFORMS).filter(k => (platCounts[k] || 0) > 0);
+
+  el('stats-platforms').innerHTML = platOrder.map(p => {
+    const plat = PLATFORMS[p];
+    const count = platCounts[p] || 0;
+    const pct = Math.round(count / maxPlat * 100);
+    return `<div class="platform-bar-row">
+      <div class="platform-bar-label" style="color:${plat.color}">${plat.label}</div>
+      <div class="platform-bar-track">
+        <div class="platform-bar-fill" style="width:${pct}%;background:${plat.color}"></div>
+      </div>
+      <div class="platform-bar-count">${count}</div>
+    </div>`;
+  }).join('');
+
+  // Status donut (SVG)
+  const donutTotal = total || 1;
+  const donutData = STATUS_ORDER.map(s => ({
+    key: s,
+    count: statusCounts[s] || 0,
+    color: STATUS_COLORS[s],
+    label: s.charAt(0).toUpperCase() + s.slice(1),
+  }));
+
+  const r = 40, cx = 50, cy = 50, stroke = 18;
+  const circ = 2 * Math.PI * r;
+  let offset = -Math.PI / 2;
+  const arcs = donutData.map(d => {
+    const angle = (d.count / donutTotal) * 2 * Math.PI;
+    const x1 = cx + r * Math.cos(offset);
+    const y1 = cy + r * Math.sin(offset);
+    offset += angle;
+    const x2 = cx + r * Math.cos(offset);
+    const y2 = cy + r * Math.sin(offset);
+    const large = angle > Math.PI ? 1 : 0;
+    return { ...d, d: angle < 0.001 ? '' : `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z` };
+  });
+
+  el('stats-status').innerHTML = `<div class="status-breakdown-inner">
+    <svg class="status-donut" viewBox="0 0 100 100" width="120" height="120">
+      ${arcs.map(a => a.d ? `<path d="${a.d}" fill="${a.color}" opacity=".85"/>` : '').join('')}
+      <circle cx="${cx}" cy="${cy}" r="${stroke}" fill="var(--surface-1)"/>
+      <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="18" font-weight="800" fill="var(--text)">${total}</text>
+      <text x="${cx}" y="${cy + 12}" text-anchor="middle" font-size="7" fill="var(--text-muted)">GAMES</text>
+    </svg>
+    <div class="status-legend">
+      ${donutData.map(d => `<div class="status-legend-row">
+        <div class="status-legend-dot" style="background:${d.color}"></div>
+        <div class="status-legend-label">${d.label}</div>
+        <div class="status-legend-count">${d.count}</div>
+        <div class="status-legend-pct">${total ? Math.round(d.count / total * 100) : 0}%</div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+
+  // Backlog picks (up to 6 random unplayed)
+  const unplayed = games.filter(g => g.status === 'unplayed');
+  const picks = shuffle(unplayed).slice(0, 6);
+  const backlogSection = el('stats-backlog-section');
+  backlogSection.style.display = picks.length ? '' : 'none';
+  if (picks.length) {
+    el('stats-backlog').innerHTML = picks.map(g => {
+      const plat = PLATFORMS[g.platform] || PLATFORMS.other;
+      return `<div class="backlog-item" data-id="${g.id}">
+        <div class="backlog-item-platform" style="color:${plat.color}">${plat.label}</div>
+        <div class="backlog-item-title">${escHtml(g.title)}</div>
+      </div>`;
+    }).join('');
+    el('stats-backlog').querySelectorAll('.backlog-item').forEach(item => {
+      item.addEventListener('click', () => {
+        setView('grid');
+        openGameModal(item.dataset.id);
+      });
+    });
+  }
+}
+
+// ── GAME MODAL ───────────────────────────────────────────
+function openGameModal(id) {
+  const game = library.games.find(g => g.id === id);
+  if (!game) return;
+  activeGameId = id;
+
+  const plat = PLATFORMS[game.platform] || PLATFORMS.other;
+
+  // Art
+  const artEl = el('modal-art');
+  if (game.boxArt) {
+    artEl.innerHTML = `<img src="${game.boxArt}" alt="" onerror="this.parentElement.innerHTML='🎮'">`;
+  } else {
+    artEl.textContent = '🎮';
+  }
+
+  // Title & badges
+  el('modal-title').textContent = game.title;
+  const badges = [`<span class="badge" style="color:${plat.color};border-color:${plat.color}33;background:${plat.color}15">${plat.label}</span>`];
+  if (game.homebrew) badges.push('<span class="badge badge-hb">Homebrew</span>');
+  if (game.year)     badges.push(`<span class="badge" style="background:var(--surface-2);border-color:var(--border-2);color:var(--text-dim)">${game.year}</span>`);
+  el('modal-badges').innerHTML = badges.join('');
+
+  // Meta grid
+  const metaItems = [
+    game.genre     && { label: 'Genre',     value: game.genre },
+    game.developer && { label: 'Developer', value: game.developer },
+    game.publisher && { label: 'Publisher', value: game.publisher },
+    game.players   && { label: 'Players',   value: game.players },
+    game.dateAdded && { label: 'Added',     value: game.dateAdded },
+  ].filter(Boolean);
+
+  el('modal-meta-grid').innerHTML = metaItems.map(m => `
+    <div class="modal-meta-item">
+      <div class="modal-meta-label">${m.label}</div>
+      <div class="modal-meta-value">${escHtml(m.value)}</div>
+    </div>
+  `).join('');
+
+  // Status
+  document.querySelectorAll('#modal-status-picker .status-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.s === game.status);
+  });
+
+  // Stars
+  updateStars(game.rating || 0);
+
+  // Notes
+  el('modal-notes').value = game.notes || '';
+
+  // Filename
+  el('modal-filename').textContent = game.filename;
+
+  el('game-modal').classList.add('open');
+}
+
+function closeGameModal() {
+  el('game-modal').classList.remove('open');
+  activeGameId = null;
+}
+
+function saveGameModal() {
+  const game = library.games.find(g => g.id === activeGameId);
+  if (!game) return;
+
+  const activeStatus = document.querySelector('#modal-status-picker .status-btn.active');
+  if (activeStatus) game.status = activeStatus.dataset.s;
+
+  const litStars = document.querySelectorAll('#modal-stars .star.lit').length;
+  game.rating = litStars || null;
+
+  game.notes = el('modal-notes').value.trim();
+
+  closeGameModal();
+  renderGames();
+  scheduleSave();
+}
+
+function updateStars(rating) {
+  document.querySelectorAll('#modal-stars .star').forEach(s => {
+    s.classList.toggle('lit', Number(s.dataset.v) <= rating);
+  });
+}
+
+// ── SETTINGS MODAL ───────────────────────────────────────
+function openSettings() {
+  const creds = getSsCreds();
+  el('ss-user').value  = creds.user    || '';
+  el('ss-pass').value  = creds.pass    || '';
+  el('ss-devid').value = creds.devid   || '';
+  el('ss-devpass').value = creds.devpass || '';
+  el('settings-drive-status').textContent = gapiReady ? 'Connected to Google Drive.' : 'Not connected.';
+  el('settings-modal').classList.add('open');
+}
+
+function saveSettings() {
+  saveSsCreds({
+    user:    el('ss-user').value.trim(),
+    pass:    el('ss-pass').value.trim(),
+    devid:   el('ss-devid').value.trim(),
+    devpass: el('ss-devpass').value.trim(),
+  });
+  el('settings-modal').classList.remove('open');
+  toast('Settings saved.', 'ok');
+  if (library.games.length > 0) el('btn-enrich').disabled = false;
+}
+
+// ── VIEW SWITCHING ───────────────────────────────────────
+function setView(view) {
+  ui.view = view;
+  document.querySelectorAll('.vtog').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === view);
+  });
+  renderGames();
+}
+
+// ── INIT ─────────────────────────────────────────────────
+function bootstrap() {
+  el('app-version').textContent = APP_VERSION;
+
+  // Platform tabs
+  el('platform-tabs').addEventListener('click', e => {
+    const tab = e.target.closest('.ptab');
+    if (!tab) return;
+    ui.platform = tab.dataset.platform;
+    document.querySelectorAll('.ptab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    renderGames();
+  });
+
+  // Status filters
+  el('status-filters').addEventListener('click', e => {
+    const btn = e.target.closest('.sfilt');
+    if (!btn) return;
+    ui.status = btn.dataset.status;
+    document.querySelectorAll('.sfilt').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderGames();
+  });
+
+  // Sort
+  el('sort-select').addEventListener('change', e => {
+    ui.sort = e.target.value;
+    renderGames();
+  });
+
+  // Search
+  el('search-input').addEventListener('input', e => {
+    ui.search = e.target.value;
+    renderGames();
+  });
+
+  // View toggle
+  document.querySelectorAll('.vtog').forEach(btn => {
+    btn.addEventListener('click', () => setView(btn.dataset.view));
+  });
+
+  // Scan
+  el('btn-scan').addEventListener('click', scanPocket);
+
+  // Enrich
+  el('btn-enrich').addEventListener('click', enrichAll);
+
+  // Settings
+  el('btn-settings').addEventListener('click', openSettings);
+  el('settings-close').addEventListener('click', () => el('settings-modal').classList.remove('open'));
+  el('settings-cancel').addEventListener('click', () => el('settings-modal').classList.remove('open'));
+  el('settings-save').addEventListener('click', saveSettings);
+  el('settings-signout').addEventListener('click', () => {
+    clearStoredToken();
+    if (typeof gapi !== 'undefined') gapi.client.setToken(null);
+    el('settings-modal').classList.remove('open');
+    el('auth-overlay').classList.add('open');
+    setSyncStatus('');
+    toast('Signed out.', 'ok');
+  });
+  el('settings-clear-data').addEventListener('click', () => {
+    if (!confirm('Clear ALL game data? This cannot be undone.')) return;
+    library = { games: [], lastSync: null, version: 1 };
+    el('settings-modal').classList.remove('open');
+    renderGames();
+    scheduleSave();
+    toast('All game data cleared.', 'ok');
+  });
+
+  // Game modal
+  el('modal-close').addEventListener('click', closeGameModal);
+  el('modal-cancel').addEventListener('click', closeGameModal);
+  el('modal-save').addEventListener('click', saveGameModal);
+  el('modal-delete').addEventListener('click', () => {
+    if (!activeGameId) return;
+    if (!confirm('Remove this game from your library?')) return;
+    library.games = library.games.filter(g => g.id !== activeGameId);
+    closeGameModal();
+    renderGames();
+    scheduleSave();
+    toast('Game removed.', 'ok');
+  });
+
+  // Modal overlay click to close
+  el('game-modal').addEventListener('click', e => {
+    if (e.target === el('game-modal')) closeGameModal();
+  });
+  el('settings-modal').addEventListener('click', e => {
+    if (e.target === el('settings-modal')) el('settings-modal').classList.remove('open');
+  });
+
+  // Status picker in modal
+  el('modal-status-picker').addEventListener('click', e => {
+    const btn = e.target.closest('.status-btn');
+    if (!btn) return;
+    document.querySelectorAll('#modal-status-picker .status-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+
+  // Stars in modal
+  el('modal-stars').addEventListener('click', e => {
+    const star = e.target.closest('.star');
+    if (!star) return;
+    const v = Number(star.dataset.v);
+    // Click same star again = clear rating
+    const currentLit = document.querySelectorAll('#modal-stars .star.lit').length;
+    updateStars(currentLit === v ? 0 : v);
+  });
+  el('modal-stars').addEventListener('mouseover', e => {
+    const star = e.target.closest('.star');
+    if (star) {
+      document.querySelectorAll('#modal-stars .star').forEach(s => {
+        s.classList.toggle('lit', Number(s.dataset.v) <= Number(star.dataset.v));
+      });
+    }
+  });
+  el('modal-stars').addEventListener('mouseleave', () => {
+    // Restore rating
+    if (!activeGameId) return;
+    const game = library.games.find(g => g.id === activeGameId);
+    updateStars(game ? (game.rating || 0) : 0);
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (el('game-modal').classList.contains('open')) closeGameModal();
+      else if (el('settings-modal').classList.contains('open')) el('settings-modal').classList.remove('open');
+    }
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+      const target = e.target;
+      if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        el('search-input').focus();
+      }
+    }
+  });
+}
+
+// ── GOOGLE AUTH INIT ─────────────────────────────────────
+async function startAuth() {
+  const overlay = el('auth-overlay');
+  const authBtn = el('auth-signin-btn');
+  const authStatus = el('auth-status');
+
+  if (GOOGLE_CLIENT_ID.startsWith('YOUR_CLIENT_ID')) {
+    overlay.classList.add('open');
+    el('auth-warn').style.display = '';
+    authBtn.disabled = true;
+    return;
+  }
+
+  try {
+    await initGapi();
+  } catch (e) {
+    console.warn('[pocket] gapi init failed', e);
+    overlay.classList.add('open');
+    authStatus.textContent = 'Google API failed to load. Check your connection.';
+    return;
+  }
+
+  await waitFor(() => typeof google !== 'undefined' && google.accounts);
+
+  const onAuth = async () => {
+    overlay.classList.remove('open');
+    setSyncStatus('Loading library…', 'syncing');
+    try {
+      const data = await driveLoad();
+      if (data && data.games) {
+        library = data;
+        if (library.games.length > 0) {
+          el('btn-enrich').disabled = false;
+        }
+      }
+    } catch (e) {
+      console.warn('[pocket] drive load failed', e);
+      setSyncStatus('Drive load failed', 'err');
+    }
+    renderGames();
+    const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setSyncStatus('Synced ' + t, 'ok');
+  };
+
+  tokenClient = makeTokenClient(onAuth, () => {
+    overlay.classList.add('open');
+    authStatus.textContent = 'Sign-in failed or was cancelled.';
+  });
+
+  authBtn.addEventListener('click', () => {
+    authStatus.textContent = 'Opening Google sign-in…';
+    tokenClient.requestAccessToken({ prompt: 'consent' });
+  });
+
+  // Try silent re-auth first
+  const stored = loadStoredToken();
+  if (stored) {
+    gapi.client.setToken({ access_token: stored.accessToken });
+    await onAuth();
+  } else {
+    overlay.classList.add('open');
+    try {
+      tokenClient.requestAccessToken({ prompt: '' });
+    } catch {
+      // Silent auth not available — user must click sign-in
+    }
+  }
+}
+
+// ── KICK OFF ─────────────────────────────────────────────
+bootstrap();
+startAuth();
+
+})(); // end IIFE
+</script>
+</body>
+</html>
