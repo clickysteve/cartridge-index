@@ -37,6 +37,7 @@
   --s-playing:   #fb923c;
   --s-completed: #4ade80;
   --s-dropped:   #f87171;
+  --card-w: 160px;
 }
 
 html, body { height: 100%; }
@@ -445,7 +446,6 @@ body {
 
 /* ── GAME GRID ──────────────────────────────────── */
 .game-grid {
-  --card-w: 160px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(var(--card-w), 48%), 1fr));
   gap: 12px;
@@ -1524,7 +1524,7 @@ body {
 .now-playing-body {
   overflow: hidden;
   transition: max-height .25s ease;
-  max-height: 200px; /* enough for cards */
+  max-height: 280px; /* enough for cards */
 }
 .now-playing-body.collapsed {
   max-height: 0;
@@ -1546,13 +1546,13 @@ body {
 }
 .now-playing-card {
   flex-shrink: 0;
-  width: 110px;
+  width: var(--card-w);
   cursor: pointer;
   text-align: center;
 }
 .now-playing-thumb {
-  width: 110px;
-  height: 146px;
+  width: var(--card-w);
+  height: calc(var(--card-w) * 1.33);
   border-radius: 8px;
   overflow: hidden;
   background: var(--surface-2);
@@ -1944,8 +1944,8 @@ body {
   .stat-card-value { font-size: 26px; }
 
   /* Now playing cards: slightly smaller on mobile */
-  .now-playing-card { width: 90px; }
-  .now-playing-thumb { width: 90px; height: 120px; }
+  .now-playing-card { width: 140px; }
+  .now-playing-thumb { width: 140px; height: calc(140px * 1.33); }
 
   /* Fullscreen gallery close button: bigger touch target */
   #fs-close {
@@ -2424,7 +2424,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.14';
+const APP_VERSION    = 'v0.5.15';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3117,13 +3117,22 @@ async function fetchItchGameByUrl(itchUrl) {
       // Strip " by Username" suffix itch.io appends
       const title = rawTitle ? rawTitle.replace(/\s+by\s+.+$/i, '').trim() : null;
 
-      // Extract full-res screenshots from screenshot_list section
+      // Extract full-res screenshots + GIFs from screenshot_list section
+      // (includes animated GIFs which are hosted at img.itch.zone/*.gif)
       const screenshots = [];
-      const slMatch = html.match(/screenshot_list[\s\S]*?<\/div>/);
-      if (slMatch) {
+      const slIdx = html.indexOf('screenshot_list');
+      if (slIdx !== -1) {
+        // Take a large chunk — screenshot_list can have many nested divs
+        const slChunk = html.slice(slIdx, slIdx + 40000);
         const hrefRe = /href="(https:\/\/img\.itch\.zone\/[^"]+)"/g;
         let m;
-        while ((m = hrefRe.exec(slMatch[0])) !== null) screenshots.push(m[1]);
+        while ((m = hrefRe.exec(slChunk)) !== null) {
+          const u = m[1];
+          // Stop if we've left the screenshot_list section (hit a different section)
+          if (screenshots.length > 0 && u.includes('static.itch.io')) break;
+          screenshots.push(u);
+          if (screenshots.length >= 20) break;
+        }
       }
 
       return { url, cover_url: coverMatch[1], title, screenshots };
@@ -3160,22 +3169,61 @@ async function fetchItchGameByUrl(itchUrl) {
   return null;
 }
 
-// ── ITCH.IO ART (API search — only works for popular games) ──
+// ── ITCH.IO ART (search-page scrape — works for obscure homebrew) ──
+// Scrapes itch.io/search results page via proxy, finds best title match,
+// then fetches the game page to get cover art + screenshots.
 async function itchArt(game) {
   try {
     const searchTitle = game.searchOverride || game.title;
-    const resp = await fetch(
-      SS_CORS_PROXY + ITCH_API + '/search/games?query=' + encodeURIComponent(searchTitle),
-      { signal: AbortSignal.timeout(8000) }
-    );
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    const titleLower = searchTitle.toLowerCase();
-    const match = (data.games || []).find(g => g.title?.toLowerCase() === titleLower);
-    if (!match) return null;
-    if (match.url && !game.itchUrl) game.itchUrl = match.url;
-    game.homebrew = true;
-    return match.cover_url || null;
+    const searchUrl = 'https://itch.io/search?q=' + encodeURIComponent(searchTitle) + '&type=games';
+    const html = await fetchItchPage(searchUrl);
+    if (!html) return null;
+
+    // Parse game_cell rows: href / data-lazy_src / title text
+    const re = /href="(https:\/\/[^"]+\.itch\.io\/[^"]+)"[^>]*>[\s\S]*?data-lazy_src="([^"]+)"[\s\S]*?class="[^"]*title[^"]*"[^>]*>\s*([^<]+?)\s*</g;
+    const results = [];
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const [, url, thumb, title] = m;
+      if (url.includes('static.itch.io')) continue;
+      if (!/^https:\/\/[^.]+\.itch\.io\/[^/?#]+$/.test(url)) continue;
+      results.push({ url, thumb, title: title.trim() });
+      if (results.length >= 10) break;
+    }
+    if (!results.length) return null;
+
+    // Score by title similarity — exact > starts-with > contains > first result
+    const needle = searchTitle.toLowerCase();
+    const score = t => {
+      const h = t.toLowerCase();
+      if (h === needle) return 3;
+      if (h.startsWith(needle) || needle.startsWith(h)) return 2;
+      if (h.includes(needle) || needle.includes(h)) return 1;
+      return 0;
+    };
+    const best = results.slice().sort((a, b) => score(b.title) - score(a.title))[0];
+    // Only auto-apply if there's some title similarity; otherwise return thumb only
+    const confidence = score(best.title);
+
+    // Fetch the game page to get full cover + screenshots
+    const match = await fetchItchGameByUrl(best.url);
+    if (match) {
+      if (!game.itchUrl) game.itchUrl = match.url;
+      game.homebrew = true;
+      if (match.screenshots?.length) {
+        const existing = new Set(game.screenshots || []);
+        match.screenshots.forEach(s => existing.add(s));
+        game.screenshots = [...existing];
+      }
+      return match.cover_url || null;
+    }
+    // Fallback: use thumbnail from search results
+    if (confidence > 0) {
+      if (!game.itchUrl) game.itchUrl = best.url;
+      game.homebrew = true;
+      return best.thumb || null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -3910,7 +3958,17 @@ function isVideoUrl(src) {
 function mediaProxyUrl(src) {
   if (!src) return src;
   if (src.includes('screenscraper.fr') && !src.startsWith(SS_CORS_PROXY)) {
-    return SS_CORS_PROXY + src;
+    return SS_CORS_PROXY + src;  // raw append, no encoding
+  }
+  return src;
+}
+
+// For videos, allorigins raw proxy adds CORS headers without double-encoding
+// and handles binary streaming better than corsproxy.io
+function videoProxyUrl(src) {
+  if (!src) return src;
+  if (src.includes('screenscraper.fr')) {
+    return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(src);
   }
   return src;
 }
@@ -3924,7 +3982,7 @@ function setFsSlide(idx) {
   } else if (isVideoUrl(src)) {
     // Use direct URL — corsproxy can't handle video byte-range streaming
     // No crossorigin attribute so browser loads in no-cors mode (works fine for display)
-    contentEl.innerHTML = `<video src="${src}" controls autoplay loop muted playsinline style="max-width:94vw;max-height:94vh"
+    contentEl.innerHTML = `<video src="${videoProxyUrl(src)}" controls autoplay loop muted playsinline style="max-width:94vw;max-height:94vh"
       onerror="this.outerHTML='<div style=\\'display:flex;flex-direction:column;align-items:center;gap:16px\\'><div style=\\'font-size:48px\\'>▶</div><a href=\\'${src}\\' target=\\'_blank\\' rel=\\'noopener\\' style=\\'color:var(--accent)\\'>Open video in new tab</a></div>'"
     ></video>`;
   } else {
@@ -3969,7 +4027,7 @@ function openGameModal(id) {
       mainEl.innerHTML = '<span class="gallery-placeholder">🎮</span>';
     } else if (isVideoUrl(src)) {
       // Direct URL — corsproxy can't stream video; no crossorigin for display-only playback
-      mainEl.innerHTML = `<video src="${src}" controls autoplay loop muted playsinline
+      mainEl.innerHTML = `<video src="${videoProxyUrl(src)}" controls autoplay loop muted playsinline
         onerror="this.outerHTML='<div style=\\'display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px\\'><div style=\\'font-size:36px\\'>▶</div><a href=\\'${src}\\' target=\\'_blank\\' rel=\\'noopener\\' style=\\'color:var(--accent);font-size:12px\\'>Open video in new tab</a></div>'"
       ></video>`;
     } else {
@@ -4438,10 +4496,10 @@ function bootstrap() {
   const cardSlider = el('card-size-slider');
   const savedCardSize = parseInt(localStorage.getItem('cartridge:cardSize') || '160', 10);
   cardSlider.value = savedCardSize;
-  el('game-grid').style.setProperty('--card-w', savedCardSize + 'px');
+  document.documentElement.style.setProperty('--card-w', savedCardSize + 'px');
   cardSlider.addEventListener('input', () => {
     const size = +cardSlider.value;
-    el('game-grid').style.setProperty('--card-w', size + 'px');
+    document.documentElement.style.setProperty('--card-w', size + 'px');
     localStorage.setItem('cartridge:cardSize', size);
   });
 
