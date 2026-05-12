@@ -3235,8 +3235,8 @@ async function enrichAll(scope) {
   scheduleSave();
   el('btn-enrich').disabled = false;
   const withArt = visible.filter(g => g.boxArt).length;
-  const scope = ui.platform !== 'all' ? ui.platform.toUpperCase() : 'visible';
-  toast(withArt + '/' + visible.length + ' ' + scope + ' games have art.', 'ok');
+  const platLabel = ui.platform !== 'all' ? ui.platform.toUpperCase() : 'visible';
+  toast(withArt + '/' + visible.length + ' ' + platLabel + ' games have art.', 'ok');
 }
 
 // ── RENDERING ────────────────────────────────────────────
