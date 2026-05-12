@@ -2424,7 +2424,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.13';
+const APP_VERSION    = 'v0.5.14';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2899,18 +2899,23 @@ async function enrichGame(game) {
       else console.warn('[CI] SS box art URL 404:', boxMedia.url);
     }
 
-    // Parse screenshots and fanart from SS — images only, no videos
+    // Parse screenshots, fanart, and video clips from SS
+    // Videos last so images load first in gallery
     const ssMediaTypes = [
       'screenshot', 'fanart', 'title-screen',
       'box-2D-side', 'wheel', 'mixrbv1',
+      'video-normalized', 'video',
     ];
     const newMedia = [];
     for (const type of ssMediaTypes) {
       const medias = (jeu.medias || []).filter(m => m.type === type);
-      // Pick up to 8 per type; prefer 'wor'/'us' regions
-      const sorted = [...medias.filter(m => preferredRegions.includes(m.region?.toLowerCase())),
-                       ...medias.filter(m => !preferredRegions.includes(m.region?.toLowerCase()))];
-      for (const m of sorted.slice(0, 8)) {
+      const isVid = type.startsWith('video');
+      // Pick up to 8 per image type (2 per video type); prefer 'wor'/'us' regions for images
+      const sorted = isVid
+        ? medias
+        : [...medias.filter(m => preferredRegions.includes(m.region?.toLowerCase())),
+           ...medias.filter(m => !preferredRegions.includes(m.region?.toLowerCase()))];
+      for (const m of sorted.slice(0, isVid ? 2 : 8)) {
         if (m.url) newMedia.push(m.url);
       }
     }
@@ -3917,8 +3922,9 @@ function setFsSlide(idx) {
   if (!src) {
     contentEl.innerHTML = '<span style="font-size:48px;opacity:.3">🎮</span>';
   } else if (isVideoUrl(src)) {
-    const vsrc = mediaProxyUrl(src);
-    contentEl.innerHTML = `<video src="${vsrc}" controls autoplay loop muted playsinline crossorigin="anonymous" style="max-width:94vw;max-height:94vh"
+    // Use direct URL — corsproxy can't handle video byte-range streaming
+    // No crossorigin attribute so browser loads in no-cors mode (works fine for display)
+    contentEl.innerHTML = `<video src="${src}" controls autoplay loop muted playsinline style="max-width:94vw;max-height:94vh"
       onerror="this.outerHTML='<div style=\\'display:flex;flex-direction:column;align-items:center;gap:16px\\'><div style=\\'font-size:48px\\'>▶</div><a href=\\'${src}\\' target=\\'_blank\\' rel=\\'noopener\\' style=\\'color:var(--accent)\\'>Open video in new tab</a></div>'"
     ></video>`;
   } else {
@@ -3951,8 +3957,8 @@ function openGameModal(id) {
 
   const plat = PLATFORMS[game.platform] || PLATFORMS.other;
 
-  // ── Gallery (box art + screenshots) — images only, no videos ──
-  const galleryImages = [game.boxArt, ...(game.screenshots || [])].filter(s => s && !isVideoUrl(s));
+  // ── Gallery (box art + screenshots) ──
+  const galleryImages = [game.boxArt, ...(game.screenshots || [])].filter(Boolean);
   let galleryIdx = 0;
 
   function setGallerySlide(idx) {
@@ -3962,8 +3968,8 @@ function openGameModal(id) {
     if (!src) {
       mainEl.innerHTML = '<span class="gallery-placeholder">🎮</span>';
     } else if (isVideoUrl(src)) {
-      const vsrc = mediaProxyUrl(src);
-      mainEl.innerHTML = `<video src="${vsrc}" controls autoplay loop muted playsinline crossorigin="anonymous"
+      // Direct URL — corsproxy can't stream video; no crossorigin for display-only playback
+      mainEl.innerHTML = `<video src="${src}" controls autoplay loop muted playsinline
         onerror="this.outerHTML='<div style=\\'display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px\\'><div style=\\'font-size:36px\\'>▶</div><a href=\\'${src}\\' target=\\'_blank\\' rel=\\'noopener\\' style=\\'color:var(--accent);font-size:12px\\'>Open video in new tab</a></div>'"
       ></video>`;
     } else {
