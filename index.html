@@ -384,7 +384,7 @@ body {
   padding: 1px 4px;
 }
 
-#sort-select, #art-filter-select, #hb-filter-select {
+#sort-select, #art-filter-select, #hb-filter-select, #tag-filter-select {
   background: var(--surface-2);
   border: 1px solid var(--border-2);
   border-radius: 6px;
@@ -576,6 +576,60 @@ body {
   letter-spacing: .05em;
   color: #f59e0b;
 }
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+.card-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 1px 5px;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(251,146,60,.25);
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.card-tag:hover { background: rgba(251,146,60,.28); border-color: var(--accent); }
+
+/* ── TAGS (modal + filter) ────────────────────── */
+.tag-chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 0;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(251,146,60,.3);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+.tag-chip-remove {
+  cursor: pointer;
+  opacity: .65;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+}
+.tag-chip-remove:hover { opacity: 1; }
 
 /* ── GAME CARD (list view) ──────────────────────── */
 .view-list .game-card {
@@ -2042,6 +2096,9 @@ body {
         <option value="yes">Homebrew only</option>
         <option value="no">Retail only</option>
       </select>
+      <select id="tag-filter-select" title="Filter by tag" style="display:none">
+        <option value="all">🏷 Tags</option>
+      </select>
       <div class="card-size-wrap" title="Card size">
         ⊞
         <input type="range" id="card-size-slider" min="100" max="300" value="160" step="10">
@@ -2229,6 +2286,14 @@ body {
         <div>
           <div class="field-label">Notes</div>
           <textarea class="notes-area" id="modal-notes" placeholder="Any notes, thoughts, passwords…"></textarea>
+        </div>
+
+        <!-- Tags -->
+        <div>
+          <div class="field-label">Tags</div>
+          <div class="tag-chips-wrap" id="modal-tags-display"></div>
+          <input class="field-input" id="modal-tag-input" placeholder="Add tag… press Enter" autocomplete="off" list="modal-tag-suggestions" style="margin-top:6px">
+          <datalist id="modal-tag-suggestions"></datalist>
         </div>
 
         <!-- Screenshots -->
@@ -2426,7 +2491,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.20';
+const APP_VERSION    = 'v0.5.21';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2479,6 +2544,7 @@ let ui = {
   status:     'all',
   art:        'all',
   homebrew:   'all',
+  tag:        'all',
   sort:       'title',
   search:     '',
   view:       'grid',
@@ -2486,6 +2552,8 @@ let ui = {
   bulk:       false,
   collection: null,
 };
+
+let modalTags = []; // tags currently being edited in the open modal
 
 let selectedIds = new Set();
 let activeGameId = null; // id of game open in modal
@@ -3501,6 +3569,26 @@ async function enrichAll(scope) {
   }
 }
 
+// ── TAGS ─────────────────────────────────────────────────
+function getAllTags() {
+  const all = new Set();
+  library.games.forEach(g => (g.tags || []).forEach(t => all.add(t)));
+  return [...all].sort((a, b) => a.localeCompare(b));
+}
+
+function renderTagFilter() {
+  const sel = el('tag-filter-select');
+  const tags = getAllTags();
+  if (!tags.length) {
+    sel.style.display = 'none';
+    ui.tag = 'all';
+    return;
+  }
+  sel.style.display = '';
+  sel.innerHTML = `<option value="all">🏷 ${ui.tag !== 'all' ? escHtml(ui.tag) : 'Tags'}</option>` +
+    tags.map(t => `<option value="${escHtml(t)}"${t === ui.tag ? ' selected' : ''}>${escHtml(t)}</option>`).join('');
+}
+
 // ── RENDERING ────────────────────────────────────────────
 function getFilteredGames() {
   let games = [...library.games];
@@ -3525,6 +3613,9 @@ function getFilteredGames() {
     games = games.filter(g => !!g.homebrew);
   } else if (ui.homebrew === 'no') {
     games = games.filter(g => !g.homebrew);
+  }
+  if (ui.tag !== 'all') {
+    games = games.filter(g => (g.tags || []).includes(ui.tag));
   }
   if (ui.search) {
     const q = ui.search.toLowerCase();
@@ -3561,6 +3652,9 @@ function renderGames() {
 
   // Ensure collections array exists
   if (!library.collections) library.collections = [];
+
+  // Update tag filter dropdown
+  renderTagFilter();
 
   // Update count badge
   const total = library.games.length;
@@ -3692,7 +3786,18 @@ function renderGames() {
     });
   } else {
     grid.querySelectorAll('.game-card').forEach(card => {
-      card.addEventListener('click', () => openGameModal(card.dataset.id));
+      card.addEventListener('click', e => {
+        // Clicking a tag chip filters by that tag instead of opening modal
+        const tagChip = e.target.closest('.card-tag');
+        if (tagChip) {
+          e.stopPropagation();
+          ui.tag = tagChip.dataset.tag;
+          renderTagFilter();
+          renderGames();
+          return;
+        }
+        openGameModal(card.dataset.id);
+      });
     });
   }
 }
@@ -3743,6 +3848,11 @@ function cardHTML(g, isDupe = false) {
   const listPlat = `<div class="view-list-platform" style="color:${plat.color};background:${plat.color}1a">${plat.label}</div>`;
 
   const meta = [g.year, g.developer].filter(Boolean).join(' · ');
+  const tagChips = (g.tags || []).length
+    ? `<div class="card-tags">${(g.tags).map(t =>
+        `<span class="card-tag" data-tag="${escHtml(t)}">${escHtml(t)}</span>`
+      ).join('')}</div>`
+    : '';
 
   return `<div class="game-card" data-id="${g.id}"${dataImgs}${dataVideo}>
     <div class="card-art">
@@ -3759,6 +3869,7 @@ function cardHTML(g, isDupe = false) {
       <div class="card-title">${escHtml(g.title)}</div>
       ${meta ? `<div class="card-meta">${escHtml(meta)}</div>` : ''}
       ${stars ? `<div class="card-rating">${stars}</div>` : ''}
+      ${tagChips}
     </div>
   </div>`;
 }
@@ -4220,6 +4331,41 @@ function openGameModal(id) {
   // Notes
   el('modal-notes').value = game.notes || '';
 
+  // Tags
+  modalTags = [...(game.tags || [])];
+  function renderModalTags() {
+    const allTags = getAllTags();
+    // Update datalist suggestions (exclude already-added tags)
+    el('modal-tag-suggestions').innerHTML = allTags
+      .filter(t => !modalTags.includes(t))
+      .map(t => `<option value="${escHtml(t)}">`)
+      .join('');
+    // Render chips
+    el('modal-tags-display').innerHTML = modalTags.map(t =>
+      `<span class="tag-chip">${escHtml(t)}<button class="tag-chip-remove" data-tag="${escHtml(t)}" type="button">×</button></span>`
+    ).join('') || '<span style="font-size:12px;color:var(--text-muted)">No tags yet</span>';
+    el('modal-tags-display').querySelectorAll('.tag-chip-remove').forEach(btn => {
+      btn.onclick = () => {
+        modalTags = modalTags.filter(t => t !== btn.dataset.tag);
+        renderModalTags();
+      };
+    });
+  }
+  renderModalTags();
+  const tagInput = el('modal-tag-input');
+  tagInput.value = '';
+  tagInput.onkeydown = e => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      const val = tagInput.value.trim().replace(/,$/, '');
+      if (val && !modalTags.includes(val)) {
+        modalTags.push(val);
+        renderModalTags();
+      }
+      tagInput.value = '';
+    }
+  };
+
   // SD card path
   const pathEl = el('modal-path');
   pathEl.textContent = game.filePath || game.filename || '';
@@ -4320,6 +4466,7 @@ function saveGameModal() {
   game.rating = litStars || null;
 
   game.notes = el('modal-notes').value.trim();
+  game.tags  = [...modalTags];
 
   game.searchOverride = el('modal-search-override').value.trim() || null;
 
@@ -4488,6 +4635,12 @@ function bootstrap() {
   // Homebrew filter dropdown
   el('hb-filter-select').addEventListener('change', e => {
     ui.homebrew = e.target.value;
+    renderGames();
+  });
+
+  // Tag filter dropdown
+  el('tag-filter-select').addEventListener('change', e => {
+    ui.tag = e.target.value;
     renderGames();
   });
 
