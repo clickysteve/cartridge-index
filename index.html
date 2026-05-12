@@ -269,6 +269,23 @@ body {
 }
 #search-input:focus { border-color: var(--accent); width: 220px; }
 #search-input::placeholder { color: var(--text-muted); }
+#search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  display: none;
+}
+#search-clear:hover { color: var(--text); }
+.search-wrap.has-value #search-input { padding-right: 22px; }
+.search-wrap.has-value #search-clear { display: block; }
 
 .sort-wrap {
   display: flex;
@@ -1432,14 +1449,14 @@ body {
 }
 .now-playing-card {
   flex-shrink: 0;
-  width: 80px;
+  width: 110px;
   cursor: pointer;
   text-align: center;
 }
 .now-playing-thumb {
-  width: 80px;
-  height: 106px;
-  border-radius: 6px;
+  width: 110px;
+  height: 146px;
+  border-radius: 8px;
   overflow: hidden;
   background: var(--surface-2);
   display: flex;
@@ -1829,9 +1846,9 @@ body {
   /* Ensure stat value doesn't overflow */
   .stat-card-value { font-size: 26px; }
 
-  /* Now playing cards: slightly smaller */
-  .now-playing-card { width: 70px; }
-  .now-playing-thumb { width: 70px; height: 93px; }
+  /* Now playing cards: slightly smaller on mobile */
+  .now-playing-card { width: 90px; }
+  .now-playing-thumb { width: 90px; height: 120px; }
 
   /* Fullscreen gallery close button: bigger touch target */
   #fs-close {
@@ -1898,9 +1915,10 @@ body {
 <!-- ── FILTERBAR ── -->
 <div class="filterbar">
   <div class="filterbar-left">
-    <div class="search-wrap">
+    <div class="search-wrap" id="search-wrap">
       <span class="search-icon">⌕</span>
       <input type="text" id="search-input" placeholder="Search…" autocomplete="off" spellcheck="false">
+      <button id="search-clear" title="Clear search (Esc)" tabindex="-1">✕</button>
     </div>
     <div class="filterbar-controls-row">
       <div class="sort-wrap">
@@ -1960,18 +1978,18 @@ body {
   </div>
 
   <!-- No results -->
-  <div class="no-results" id="no-results">No games match your filters.</div>
-
-  <!-- Now Playing strip -->
+  <!-- Now Playing strip — always above grid and no-results -->
   <div id="now-playing-section" style="display:none">
     <div class="now-playing-label" id="now-playing-toggle" style="cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none">
-      <span>▶ Currently Playing</span>
-      <span id="now-playing-chevron" style="font-size:10px;transition:transform .2s">▾</span>
+      <span id="now-playing-chevron" style="font-size:11px;transition:transform .2s;display:inline-block">▶</span>
+      <span>Currently Playing</span>
     </div>
     <div id="now-playing-body" class="now-playing-body">
       <div class="now-playing-scroll" id="now-playing-scroll"></div>
     </div>
   </div>
+
+  <div class="no-results" id="no-results">No games match your filters.</div>
 
   <!-- Game grid -->
   <div class="game-grid" id="game-grid"></div>
@@ -2299,7 +2317,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.11';
+const APP_VERSION    = 'v0.5.12';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3523,19 +3541,24 @@ function cardHTML(g, isDupe = false) {
   const stars = g.rating ? '★'.repeat(g.rating) + '☆'.repeat(5 - g.rating) : '';
 
   // Primary image — respects the art/screenshot toggle
-  const firstShot = (g.screenshots || []).find(s => !s.match(/\.(mp4|webm|ogg)($|\?)/i));
+  const allShots = (g.screenshots || []).filter(s => !isVideoUrl(s));
+  const firstShot = allShots[0];
   const primarySrc = ui.gridImg === 'shot' ? (firstShot || g.boxArt) : g.boxArt;
-  // Hover image — the other one
-  const hoverSrc   = ui.gridImg === 'shot' ? g.boxArt : firstShot;
+
+  // All images available for hover cycling (exclude the primary to avoid repeating it)
+  const cycleImgs = ui.gridImg === 'shot'
+    ? [g.boxArt, ...allShots.slice(1)].filter(Boolean)
+    : allShots.filter(Boolean);
 
   const errFallback = `var p=document.createElement('div');p.className='card-art-placeholder';p.innerHTML='<div class=\\'card-art-placeholder-icon\\'>🎮</div><div class=\\'card-art-placeholder-label\\'>${plat.label}</div>';this.replaceWith(p)`;
   const artHTML = primarySrc
     ? `<img src="${primarySrc}" alt="" loading="lazy" onerror="${errFallback}">`
     : `<div class="card-art-placeholder"><div class="card-art-placeholder-icon">🎮</div><div class="card-art-placeholder-label">${plat.label}</div></div>`;
 
-  // Hover overlay (fades in on hover to show the alternate image)
-  const hoverOverlay = hoverSrc
-    ? `<img class="card-hover-img" src="${hoverSrc}" alt="" loading="lazy">`
+  // Hover overlay — cycling through available images
+  const dataImgs = cycleImgs.length ? ` data-imgs="${escHtml(JSON.stringify(cycleImgs))}"` : '';
+  const hoverOverlay = cycleImgs.length
+    ? `<img class="card-hover-img" src="${cycleImgs[0]}" alt="" loading="lazy">`
     : '';
 
   const platformBadge = `<div class="card-platform-badge" style="color:${plat.color}">${plat.label}</div>`;
@@ -3548,7 +3571,7 @@ function cardHTML(g, isDupe = false) {
 
   const meta = [g.year, g.developer].filter(Boolean).join(' · ');
 
-  return `<div class="game-card" data-id="${g.id}">
+  return `<div class="game-card" data-id="${g.id}"${dataImgs}>
     <div class="card-art">
       ${artHTML}
       ${hoverOverlay}
@@ -4170,9 +4193,20 @@ function bootstrap() {
   });
 
   // Search
+  function clearSearch() {
+    ui.search = '';
+    el('search-input').value = '';
+    el('search-wrap').classList.remove('has-value');
+    renderGames();
+  }
   el('search-input').addEventListener('input', e => {
     ui.search = e.target.value;
+    el('search-wrap').classList.toggle('has-value', !!e.target.value);
     renderGames();
+  });
+  el('search-clear').addEventListener('click', () => {
+    clearSearch();
+    el('search-input').focus();
   });
 
   // Grid image toggle (art ↔ screenshot)
@@ -4237,15 +4271,58 @@ function bootstrap() {
     const collapsed = localStorage.getItem('cartridge:npCollapsed') === '1';
     if (collapsed) {
       el('now-playing-body')?.classList.add('collapsed');
-      if (el('now-playing-chevron')) el('now-playing-chevron').style.transform = 'rotate(-90deg)';
+      if (el('now-playing-chevron')) el('now-playing-chevron').style.transform = 'rotate(0deg)';
+    } else {
+      if (el('now-playing-chevron')) el('now-playing-chevron').style.transform = 'rotate(90deg)';
     }
     el('now-playing-toggle')?.addEventListener('click', () => {
       const body = el('now-playing-body');
       const chev = el('now-playing-chevron');
       const isCollapsed = body.classList.toggle('collapsed');
-      chev.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+      chev.style.transform = isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)';
       localStorage.setItem('cartridge:npCollapsed', isCollapsed ? '1' : '0');
     });
+  })();
+
+  // Card hover — cycle through screenshots every 4 seconds
+  (function() {
+    let hoverTimer = null;
+    let hoverCard  = null;
+    let hoverIdx   = 0;
+
+    function startCycle(card) {
+      const raw = card.dataset.imgs;
+      if (!raw) return;
+      let imgs;
+      try { imgs = JSON.parse(raw.replace(/&quot;/g, '"').replace(/&amp;/g, '&')); } catch { return; }
+      if (!imgs || imgs.length < 2) return;
+
+      hoverCard = card;
+      hoverIdx  = 0;
+
+      const overlay = card.querySelector('.card-hover-img');
+      if (!overlay) return;
+
+      hoverTimer = setInterval(() => {
+        hoverIdx = (hoverIdx + 1) % imgs.length;
+        overlay.src = imgs[hoverIdx];
+      }, 4000);
+    }
+
+    function stopCycle() {
+      if (hoverTimer) { clearInterval(hoverTimer); hoverTimer = null; }
+      hoverCard = null;
+      hoverIdx  = 0;
+    }
+
+    el('game-grid').addEventListener('mouseover', e => {
+      const card = e.target.closest('.game-card');
+      if (!card || card === hoverCard) return;
+      stopCycle();
+      startCycle(card);
+    });
+
+    el('game-grid').addEventListener('mouseleave', () => stopCycle());
   })();
 
   // Scan
@@ -4404,9 +4481,18 @@ function bootstrap() {
 
     if (e.key === 'Escape') {
       if (fsOpen) { closeFs(); return; }
-      if (modalOpen) closeGameModal();
-      else if (el('settings-modal').classList.contains('open')) el('settings-modal').classList.remove('open');
-      else if (el('collections-panel').classList.contains('open')) el('collections-panel').classList.remove('open');
+      if (modalOpen) { closeGameModal(); return; }
+      if (el('settings-modal').classList.contains('open')) { el('settings-modal').classList.remove('open'); return; }
+      if (el('collections-panel').classList.contains('open')) { el('collections-panel').classList.remove('open'); return; }
+      // Nothing open — clear search and selections
+      const hadSearch = !!ui.search;
+      const hadSelection = selectedIds.size > 0;
+      if (hadSearch) clearSearch();
+      if (hadSelection) {
+        selectedIds.clear();
+        renderGames();
+      }
+      if (hadSearch || hadSelection) el('search-input').blur();
     }
     if (fsOpen) {
       if (e.key === 'ArrowLeft')  { setFsSlide(fsIdx - 1); return; }
