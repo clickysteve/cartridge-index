@@ -708,48 +708,97 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 14px;
-  padding: 20px 20px 16px;
+  padding: 18px 20px 14px;
   border-bottom: 1px solid var(--border);
 }
-.modal-art {
-  width: 90px;
-  height: 120px;
-  border-radius: 6px;
-  background: var(--surface-2);
-  flex-shrink: 0;
-  overflow: hidden;
+/* ── Gallery ────────────────────────────── */
+.modal-gallery {
+  padding: 0 16px 0;
+}
+.modal-gallery-stage {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 32px;
-  color: var(--text-muted);
+  background: var(--surface-2);
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 200px;
+  height: 260px;
 }
-.modal-art img {
+.modal-gallery-main {
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  background: var(--surface-1);
-}
-
-/* Screenshot strip */
-.modal-screenshots {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  justify-content: center;
+}
+.modal-gallery-main img {
+  max-width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  display: block;
+  background: var(--surface-2);
+}
+.modal-gallery-main .gallery-placeholder {
+  font-size: 48px;
+  opacity: .25;
+}
+.gallery-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  background: rgba(0,0,0,.65);
+  border: 1px solid rgba(255,255,255,.1);
+  color: #fff;
+  font-size: 22px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity .15s, background .15s;
+  padding: 0;
+}
+.gallery-nav:hover { background: rgba(0,0,0,.85); }
+.modal-gallery-stage:hover .gallery-nav { opacity: 1; }
+.gallery-nav.hidden { display: none !important; }
+.gallery-prev { left: 8px; }
+.gallery-next { right: 8px; }
+.gallery-counter {
+  position: absolute;
+  bottom: 7px;
+  right: 10px;
+  font-size: 10px;
+  color: rgba(255,255,255,.5);
+  pointer-events: none;
+}
+.modal-gallery-thumbs {
+  display: flex;
+  gap: 5px;
+  margin-top: 8px;
   overflow-x: auto;
   scrollbar-width: thin;
   padding-bottom: 2px;
 }
-.modal-screenshot-thumb {
+.gallery-thumb {
   flex-shrink: 0;
-  width: 100px;
-  height: 70px;
+  width: 54px;
+  height: 54px;
   border-radius: 5px;
   overflow: hidden;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
   cursor: pointer;
+  border: 2px solid transparent;
+  background: var(--surface-2);
+  transition: border-color .12s;
 }
-.modal-screenshot-thumb img {
+.gallery-thumb.active { border-color: var(--accent); }
+.gallery-thumb img {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -1214,20 +1263,28 @@ body {
 <div class="modal-overlay" id="game-modal">
   <div class="modal" id="game-modal-inner">
     <div class="modal-header">
-      <div class="modal-art" id="modal-art">🎮</div>
       <div class="modal-header-info">
         <div class="modal-title" id="modal-title">Game Title</div>
         <div class="modal-badges" id="modal-badges"></div>
       </div>
       <button class="modal-close" id="modal-close">×</button>
     </div>
+
+    <!-- Full-width art + screenshot gallery -->
+    <div class="modal-gallery" id="modal-gallery">
+      <div class="modal-gallery-stage">
+        <div class="modal-gallery-main" id="modal-gallery-main">
+          <span class="gallery-placeholder">🎮</span>
+        </div>
+        <button class="gallery-nav gallery-prev hidden" id="gallery-prev">‹</button>
+        <button class="gallery-nav gallery-next hidden" id="gallery-next">›</button>
+        <div class="gallery-counter" id="gallery-counter"></div>
+      </div>
+      <div class="modal-gallery-thumbs" id="modal-gallery-thumbs"></div>
+    </div>
+
     <div class="modal-body">
       <div class="modal-meta-grid" id="modal-meta-grid"></div>
-
-      <div id="modal-screenshots-row" style="display:none">
-        <div class="field-label">Screenshots</div>
-        <div class="modal-screenshots" id="modal-screenshots"></div>
-      </div>
 
       <div id="modal-itch-row" style="display:none">
         <a class="modal-itch-link" id="modal-itch-link" href="#" target="_blank" rel="noopener">
@@ -1367,7 +1424,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.4.1';
+const APP_VERSION    = 'v0.4.2';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -1977,9 +2034,11 @@ async function itchArt(game) {
     );
     if (!resp.ok) return null;
     const data = await resp.json();
+    // Only accept exact title matches — the fallback to [0] was grabbing wrong games
+    const title = game.title.toLowerCase();
     const match = (data.games || []).find(g =>
-      g.title?.toLowerCase() === game.title.toLowerCase()
-    ) || data.games?.[0];
+      g.title?.toLowerCase() === title
+    );
     if (!match) return null;
     // Store the itch.io game URL for homebrew linking
     if (match.url && !game.itchUrl) game.itchUrl = match.url;
@@ -2406,15 +2465,47 @@ function openGameModal(id) {
 
   const plat = PLATFORMS[game.platform] || PLATFORMS.other;
 
-  // Art
-  const artEl = el('modal-art');
-  if (game.boxArt) {
-    artEl.innerHTML = `<img src="${game.boxArt}" alt="" onerror="this.parentElement.textContent='🎮'">`;
-    artEl.style.opacity = '';
-  } else {
-    artEl.textContent = '🎮';
-    artEl.style.opacity = '.35';
+  // ── Gallery (box art + screenshots) ──
+  const galleryImages = [game.boxArt, ...(game.screenshots || [])].filter(Boolean);
+  let galleryIdx = 0;
+
+  function setGallerySlide(idx) {
+    galleryIdx = ((idx % galleryImages.length) + galleryImages.length) % galleryImages.length;
+    const src = galleryImages[galleryIdx];
+    el('modal-gallery-main').innerHTML = src
+      ? `<img src="${src}" alt="" onerror="this.parentElement.innerHTML='<span class=\\'gallery-placeholder\\'>🎮</span>'">`
+      : '<span class="gallery-placeholder">🎮</span>';
+    // Thumb highlight
+    document.querySelectorAll('#modal-gallery-thumbs .gallery-thumb').forEach((t, i) => {
+      t.classList.toggle('active', i === galleryIdx);
+    });
+    // Counter
+    el('gallery-counter').textContent = galleryImages.length > 1
+      ? (galleryIdx + 1) + ' / ' + galleryImages.length : '';
   }
+
+  // Thumbnails — only show if more than one image
+  const thumbsEl = el('modal-gallery-thumbs');
+  if (galleryImages.length > 1) {
+    thumbsEl.innerHTML = galleryImages.map((src, i) =>
+      `<div class="gallery-thumb${i === 0 ? ' active' : ''}" data-idx="${i}">` +
+      `<img src="${src}" alt="" onerror="this.parentElement.style.display='none'"></div>`
+    ).join('');
+    thumbsEl.querySelectorAll('.gallery-thumb').forEach(t => {
+      t.addEventListener('click', () => setGallerySlide(+t.dataset.idx));
+    });
+  } else {
+    thumbsEl.innerHTML = '';
+  }
+
+  // Nav button visibility
+  const hasMultiple = galleryImages.length > 1;
+  el('gallery-prev').classList.toggle('hidden', !hasMultiple);
+  el('gallery-next').classList.toggle('hidden', !hasMultiple);
+  el('gallery-prev').onclick = () => setGallerySlide(galleryIdx - 1);
+  el('gallery-next').onclick = () => setGallerySlide(galleryIdx + 1);
+
+  setGallerySlide(0);
 
   // Title & badges
   el('modal-title').textContent = game.title;
@@ -2438,19 +2529,6 @@ function openGameModal(id) {
       <div class="modal-meta-value">${escHtml(m.value)}</div>
     </div>
   `).join('');
-
-  // Screenshots
-  const screenshotRow = el('modal-screenshots-row');
-  const screenshotEl  = el('modal-screenshots');
-  const shots = game.screenshots || [];
-  if (shots.length) {
-    screenshotEl.innerHTML = shots.map(s =>
-      `<div class="modal-screenshot-thumb"><img src="${s}" alt="Screenshot" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
-    ).join('');
-    screenshotRow.style.display = '';
-  } else {
-    screenshotRow.style.display = 'none';
-  }
 
   // itch.io link (for homebrew or any game with an itchUrl)
   const itchRow  = el('modal-itch-row');
@@ -2666,11 +2744,8 @@ function bootstrap() {
     await enrichOneGame(game);
     btn.disabled = false;
     btn.textContent = 'Enrich';
-    // Refresh art in modal
-    const artEl = el('modal-art');
-    if (game.boxArt) {
-      artEl.innerHTML = `<img src="${game.boxArt}" alt="" onerror="this.parentElement.textContent='🎮'">`;
-    }
+    // Re-open modal to refresh gallery
+    openGameModal(game.id);
     renderGames();
     scheduleSave();
     toast(game.boxArt ? 'Art found!' : 'No art found for this game.', game.boxArt ? 'ok' : '');
@@ -2734,6 +2809,10 @@ function bootstrap() {
     if (e.key === 'Escape') {
       if (el('game-modal').classList.contains('open')) closeGameModal();
       else if (el('settings-modal').classList.contains('open')) el('settings-modal').classList.remove('open');
+    }
+    if (el('game-modal').classList.contains('open')) {
+      if (e.key === 'ArrowLeft')  el('gallery-prev').onclick?.();
+      if (e.key === 'ArrowRight') el('gallery-next').onclick?.();
     }
     if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
       const target = e.target;
