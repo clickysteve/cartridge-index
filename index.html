@@ -2424,7 +2424,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.16';
+const APP_VERSION    = 'v0.5.17';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3317,17 +3317,17 @@ async function enrichFallbackArt(game) {
 
 // Enrich a single game: itch.io first for homebrew, then libretro, then SS
 async function enrichOneGame(game) {
-  // For homebrew: if we have a stored itchUrl, use URL-based fetch (reliable for any game).
-  // Otherwise fall back to title search (only works for popular games).
-  if (game.homebrew && !game.boxArt) {
+  // For homebrew with a stored itchUrl: always fetch — cover if missing, screenshots always.
+  // For homebrew without itchUrl: only search when art is missing.
+  if (game.homebrew) {
     if (game.itchUrl) {
       const match = await fetchItchGameByUrl(game.itchUrl);
       if (match) {
-        if (match.cover_url) game.boxArt = match.cover_url;
+        if (match.cover_url && !game.boxArt) game.boxArt = match.cover_url;
         if (match.title && !game.title) game.title = match.title;
         if (match.screenshots?.length) game.screenshots = match.screenshots;
       }
-    } else {
+    } else if (!game.boxArt) {
       const url = await itchArt(game);
       if (url) game.boxArt = url;
     }
@@ -3354,8 +3354,8 @@ async function enrichOneGame(game) {
     await enrichGame(game);
   }
 
-  // itch.io fallback — homebrew only (retail games don't exist on itch.io)
-  if (!game.boxArt && game.homebrew) {
+  // itch.io fallback — homebrew only; only search if still missing art
+  if (game.homebrew && !game.boxArt && !game.itchUrl) {
     const url = await itchArt(game);
     if (url) game.boxArt = url;
   }
@@ -3381,16 +3381,21 @@ async function enrichAll(scope) {
   el('btn-enrich').disabled = true;
   let done = 0;
 
-  // ── Pass 1: itch.io for homebrew games (libretro won't have them) ──
-  // Use URL-based fetch when itchUrl is stored; fall back to title search.
-  const hbNeedArt = needArt.filter(g => g.homebrew);
+  // ── Pass 1: itch.io for homebrew games ──
+  // • Games without art: try full search + fetch
+  // • Games with itchUrl but no screenshots: always re-fetch to pull GIFs/images
+  const hbNeedArt   = needArt.filter(g => g.homebrew);
+  const hbNeedShots = visible.filter(g =>
+    g.homebrew && g.itchUrl && !hbNeedArt.includes(g) && !(g.screenshots?.length)
+  );
+  const hbQueue = [...hbNeedArt, ...hbNeedShots];
   done = 0;
-  for (const game of hbNeedArt) {
-    showProgress('itch.io (homebrew)… ' + done + '/' + hbNeedArt.length, Math.round(done / hbNeedArt.length * 100));
+  for (const game of hbQueue) {
+    showProgress('itch.io (homebrew)… ' + done + '/' + hbQueue.length, Math.round(done / hbQueue.length * 100));
     if (game.itchUrl) {
       const match = await fetchItchGameByUrl(game.itchUrl);
       if (match) {
-        if (match.cover_url) game.boxArt = match.cover_url;
+        if (match.cover_url && !game.boxArt) game.boxArt = match.cover_url;
         if (match.screenshots?.length) game.screenshots = match.screenshots;
       }
     } else {
@@ -3400,7 +3405,7 @@ async function enrichAll(scope) {
     done++;
     await new Promise(r => setTimeout(r, 100));
   }
-  if (hbNeedArt.length > 0) renderGames();
+  if (hbQueue.length > 0) renderGames();
 
   // ── Pass 2: libretro — parallel batch lookup with region-variant fallback ──
   // User ROMs often lack No-Intro region codes so we try several variants.
