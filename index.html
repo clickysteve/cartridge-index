@@ -786,6 +786,103 @@ body {
   flex-shrink: 0;
 }
 
+/* Year chart */
+.year-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.year-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 0;
+}
+.year-bar-row:hover .year-bar-fill { filter: brightness(1.25); }
+.year-bar-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  width: 36px;
+  flex-shrink: 0;
+  text-align: right;
+}
+.year-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.year-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width .4s ease;
+}
+.year-bar-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Dev leaderboard */
+.dev-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dev-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.dev-row:hover .dev-bar-fill { filter: brightness(1.25); }
+.dev-rank {
+  font-size: 10px;
+  color: var(--text-muted);
+  width: 16px;
+  flex-shrink: 0;
+  text-align: right;
+}
+.dev-name {
+  font-size: 11px;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dev-bar-track {
+  width: 80px;
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.dev-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: #60a5fa;
+  transition: width .4s ease;
+}
+.dev-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Clickable platform bar */
+.platform-bar-row { cursor: pointer; }
+.platform-bar-row:hover .platform-bar-fill { filter: brightness(1.25); }
+
 /* ── MODALS ─────────────────────────────────────── */
 .modal-overlay {
   display: none;
@@ -2010,6 +2107,16 @@ body {
         <div class="status-breakdown" id="stats-status"></div>
       </div>
     </div>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+      <div style="flex:1;min-width:260px">
+        <div class="stats-section-title">By Release Year</div>
+        <div class="year-bars" id="stats-years"></div>
+      </div>
+      <div style="flex:1;min-width:220px">
+        <div class="stats-section-title">Top Developers</div>
+        <div class="dev-list" id="stats-devs"></div>
+      </div>
+    </div>
     <div id="stats-backlog-section">
       <div class="stats-section-title">Backlog Picks <span style="color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0">(random unplayed)</span></div>
       <div class="backlog-grid" id="stats-backlog"></div>
@@ -2317,7 +2424,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.12';
+const APP_VERSION    = 'v0.5.13';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2792,23 +2899,18 @@ async function enrichGame(game) {
       else console.warn('[CI] SS box art URL 404:', boxMedia.url);
     }
 
-    // Parse screenshots, fanart, and video clips from SS
-    // Image types ordered by priority; videos last
+    // Parse screenshots and fanart from SS — images only, no videos
     const ssMediaTypes = [
       'screenshot', 'fanart', 'title-screen',
       'box-2D-side', 'wheel', 'mixrbv1',
-      'video-normalized', 'video',
     ];
     const newMedia = [];
     for (const type of ssMediaTypes) {
       const medias = (jeu.medias || []).filter(m => m.type === type);
-      const isVid = type.startsWith('video');
-      // Pick up to 6 per type; prefer 'wor'/'us' regions for images
-      const sorted = isVid
-        ? medias
-        : [...medias.filter(m => preferredRegions.includes(m.region?.toLowerCase())),
-           ...medias.filter(m => !preferredRegions.includes(m.region?.toLowerCase()))];
-      for (const m of sorted.slice(0, 6)) {
+      // Pick up to 8 per type; prefer 'wor'/'us' regions
+      const sorted = [...medias.filter(m => preferredRegions.includes(m.region?.toLowerCase())),
+                       ...medias.filter(m => !preferredRegions.includes(m.region?.toLowerCase()))];
+      for (const m of sorted.slice(0, 8)) {
         if (m.url) newMedia.push(m.url);
       }
     }
@@ -3331,6 +3433,17 @@ async function enrichAll(scope) {
   const withArt = visible.filter(g => g.boxArt).length;
   const platLabel = ui.platform !== 'all' ? ui.platform.toUpperCase() : 'visible';
   toast(withArt + '/' + visible.length + ' ' + platLabel + ' games have art.', 'ok');
+
+  // Warn about homebrew games that still have no art — itch API can't find obscure titles
+  const hbNoArt = visible.filter(g => g.homebrew && !g.boxArt && !g.itchUrl);
+  if (hbNoArt.length > 0) {
+    const example = hbNoArt[0].title;
+    setTimeout(() => toast(
+      hbNoArt.length + ' homebrew game' + (hbNoArt.length > 1 ? 's' : '') +
+      ' need a manual itch.io URL (e.g. "' + example + '") — open the game and paste the URL from itch.io.',
+      ''
+    ), 1800);
+  }
 }
 
 // ── RENDERING ────────────────────────────────────────────
@@ -3635,7 +3748,7 @@ function renderStats() {
     const plat = PLATFORMS[p];
     const count = platCounts[p] || 0;
     const pct = Math.round(count / maxPlat * 100);
-    return `<div class="platform-bar-row">
+    return `<div class="platform-bar-row" data-platform="${p}" title="Filter by ${plat.label}">
       <div class="platform-bar-label" style="color:${plat.color}">${plat.label}</div>
       <div class="platform-bar-track">
         <div class="platform-bar-fill" style="width:${pct}%;background:${plat.color}"></div>
@@ -3643,6 +3756,12 @@ function renderStats() {
       <div class="platform-bar-count">${count}</div>
     </div>`;
   }).join('');
+  el('stats-platforms').querySelectorAll('.platform-bar-row[data-platform]').forEach(row => {
+    row.addEventListener('click', () => {
+      ui.platform = row.dataset.platform;
+      setView('grid');
+    });
+  });
 
   // Status donut (SVG)
   const donutTotal = total || 1;
@@ -3683,6 +3802,68 @@ function renderStats() {
       </div>`).join('')}
     </div>
   </div>`;
+
+  // ── Year distribution ──
+  const yearCounts = {};
+  games.forEach(g => {
+    if (!g.year) return;
+    const y = String(g.year).match(/\d{4}/)?.[0];
+    if (y) yearCounts[y] = (yearCounts[y] || 0) + 1;
+  });
+  const yearKeys = Object.keys(yearCounts).sort();
+  const maxYear = Math.max(...Object.values(yearCounts), 1);
+  if (yearKeys.length) {
+    el('stats-years').innerHTML = yearKeys.map(y => {
+      const count = yearCounts[y];
+      const pct = Math.round(count / maxYear * 100);
+      return `<div class="year-bar-row" data-year="${y}" title="Filter to ${y}">
+        <div class="year-bar-label">${y}</div>
+        <div class="year-bar-track"><div class="year-bar-fill" style="width:${pct}%"></div></div>
+        <div class="year-bar-count">${count}</div>
+      </div>`;
+    }).join('');
+    el('stats-years').querySelectorAll('.year-bar-row[data-year]').forEach(row => {
+      row.addEventListener('click', () => {
+        ui.search = row.dataset.year;
+        el('search-input').value = row.dataset.year;
+        el('search-wrap').classList.add('has-value');
+        setView('grid');
+      });
+    });
+  } else {
+    el('stats-years').innerHTML = '<div style="font-size:11px;color:var(--text-muted)">No year data yet — enrich games with ScreenScraper to populate.</div>';
+  }
+
+  // ── Top developers ──
+  const devCounts = {};
+  games.forEach(g => {
+    if (!g.developer) return;
+    devCounts[g.developer] = (devCounts[g.developer] || 0) + 1;
+  });
+  const topDevs = Object.entries(devCounts).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const maxDev = topDevs[0]?.[1] || 1;
+  if (topDevs.length) {
+    el('stats-devs').innerHTML = topDevs.map(([dev, count], i) => {
+      const pct = Math.round(count / maxDev * 100);
+      return `<div class="dev-row" data-dev="${escHtml(dev)}" title="Search ${escHtml(dev)}">
+        <div class="dev-rank">${i + 1}</div>
+        <div class="dev-name">${escHtml(dev)}</div>
+        <div class="dev-bar-track"><div class="dev-bar-fill" style="width:${pct}%"></div></div>
+        <div class="dev-count">${count}</div>
+      </div>`;
+    }).join('');
+    el('stats-devs').querySelectorAll('.dev-row[data-dev]').forEach(row => {
+      row.addEventListener('click', () => {
+        const dev = row.dataset.dev;
+        ui.search = dev;
+        el('search-input').value = dev;
+        el('search-wrap').classList.add('has-value');
+        setView('grid');
+      });
+    });
+  } else {
+    el('stats-devs').innerHTML = '<div style="font-size:11px;color:var(--text-muted)">No developer data yet — enrich with ScreenScraper to populate.</div>';
+  }
 
   // Backlog picks (up to 6 random unplayed)
   const unplayed = games.filter(g => g.status === 'unplayed');
@@ -3770,8 +3951,8 @@ function openGameModal(id) {
 
   const plat = PLATFORMS[game.platform] || PLATFORMS.other;
 
-  // ── Gallery (box art + screenshots) ──
-  const galleryImages = [game.boxArt, ...(game.screenshots || [])].filter(Boolean);
+  // ── Gallery (box art + screenshots) — images only, no videos ──
+  const galleryImages = [game.boxArt, ...(game.screenshots || [])].filter(s => s && !isVideoUrl(s));
   let galleryIdx = 0;
 
   function setGallerySlide(idx) {
@@ -4290,11 +4471,14 @@ function bootstrap() {
     let hoverCard  = null;
     let hoverIdx   = 0;
 
-    function startCycle(card) {
+    function parseImgs(card) {
       const raw = card.dataset.imgs;
-      if (!raw) return;
-      let imgs;
-      try { imgs = JSON.parse(raw.replace(/&quot;/g, '"').replace(/&amp;/g, '&')); } catch { return; }
+      if (!raw) return null;
+      try { return JSON.parse(raw.replace(/&quot;/g, '"').replace(/&amp;/g, '&')); } catch { return null; }
+    }
+
+    function startCycle(card) {
+      const imgs = parseImgs(card);
       if (!imgs || imgs.length < 2) return;
 
       hoverCard = card;
@@ -4302,15 +4486,22 @@ function bootstrap() {
 
       const overlay = card.querySelector('.card-hover-img');
       if (!overlay) return;
+      overlay.src = imgs[0];
 
       hoverTimer = setInterval(() => {
         hoverIdx = (hoverIdx + 1) % imgs.length;
         overlay.src = imgs[hoverIdx];
-      }, 4000);
+      }, 1500);
     }
 
     function stopCycle() {
       if (hoverTimer) { clearInterval(hoverTimer); hoverTimer = null; }
+      // Reset overlay to first image so next hover starts fresh
+      if (hoverCard) {
+        const overlay = hoverCard.querySelector('.card-hover-img');
+        const imgs = parseImgs(hoverCard);
+        if (overlay && imgs && imgs.length) overlay.src = imgs[0];
+      }
       hoverCard = null;
       hoverIdx  = 0;
     }
