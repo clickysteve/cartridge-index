@@ -2426,7 +2426,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.19';
+const APP_VERSION    = 'v0.5.20';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3999,18 +3999,19 @@ async function fetchYtVideoId(game) {
   const plat = PLATFORMS[game.platform]?.label || '';
   const q = encodeURIComponent((game.title || '') + ' ' + plat + ' gameplay');
   for (const base of YT_INVIDIOUS_INSTANCES) {
+    const apiUrl = `${base}/api/v1/search?q=${q}&type=video&fields=videoId,title&page=1`;
+    // Must proxy through allorigins to avoid CORS block in browser
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
     try {
-      const r = await fetch(
-        `${base}/api/v1/search?q=${q}&type=video&fields=videoId,title&page=1`,
-        { signal: AbortSignal.timeout(8000) }
-      );
+      const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
       if (!r.ok) continue;
-      const results = await r.json();
+      const data = await r.json();
+      const results = JSON.parse(data.contents || '[]');
       if (Array.isArray(results) && results.length) {
         const id = results[0].videoId;
         if (id) { console.log('[CI] YT video found for', game.title, '→', id); return id; }
       }
-    } catch (e) { /* try next instance */ }
+    } catch (e) { console.warn('[CI] YT fetch failed:', game.title, e.message); }
   }
   console.log('[CI] YT no result for', game.title);
   return null;
