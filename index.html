@@ -2212,7 +2212,7 @@ body {
       <div class="settings-section" style="gap:6px">
         <div class="settings-section-title">About</div>
         <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
-          Cartridge Index <span id="app-version">v0.5.7</span><br>
+          Cartridge Index <span id="app-version">v0.5.8</span><br>
           Reads from Analogue Pocket SD card via File System Access API.<br>
           Metadata from <a href="https://www.screenscraper.fr" target="_blank" style="color:var(--accent)">ScreenScraper</a>.<br>
           Library synced to Google Drive appdata.
@@ -2297,7 +2297,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.7';
+const APP_VERSION    = 'v0.5.8';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2773,16 +2773,22 @@ async function enrichGame(game) {
     }
 
     // Parse screenshots, fanart, and video clips from SS
-    const ssMediaTypes = ['screenshot', 'fanart', 'video-normalized', 'video'];
+    // Image types ordered by priority; videos last
+    const ssMediaTypes = [
+      'screenshot', 'fanart', 'title-screen',
+      'box-2D-side', 'wheel', 'mixrbv1',
+      'video-normalized', 'video',
+    ];
     const newMedia = [];
     for (const type of ssMediaTypes) {
       const medias = (jeu.medias || []).filter(m => m.type === type);
-      // Pick up to 4 per type; prefer 'wor'/'us' regions for images
-      const sorted = type.startsWith('video')
+      const isVid = type.startsWith('video');
+      // Pick up to 6 per type; prefer 'wor'/'us' regions for images
+      const sorted = isVid
         ? medias
         : [...medias.filter(m => preferredRegions.includes(m.region?.toLowerCase())),
            ...medias.filter(m => !preferredRegions.includes(m.region?.toLowerCase()))];
-      for (const m of sorted.slice(0, 4)) {
+      for (const m of sorted.slice(0, 6)) {
         if (m.url) newMedia.push(m.url);
       }
     }
@@ -2942,37 +2948,50 @@ function libretroArtUrl(game) {
 }
 
 // ── FETCH ITCH GAME BY URL ───────────────────────────────
-// itch.io blocks corsproxy.io — use codetabs proxy for page scraping.
-// Fallback: API search by slug (works for popular games in search results).
-const ITCH_PAGE_PROXY = 'https://api.codetabs.com/v1/proxy?quest=';
+// itch.io blocks corsproxy.io — try multiple proxies for page scraping.
+// Each proxy has different CORS policies; we try them in order.
+const ITCH_PAGE_PROXIES = [
+  u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,  // returns JSON {contents}
+];
+
+async function fetchItchPage(url) {
+  for (const makeProxyUrl of ITCH_PAGE_PROXIES) {
+    try {
+      const resp = await fetch(makeProxyUrl(url), { signal: AbortSignal.timeout(12000) });
+      if (!resp.ok) continue;
+      const raw = await resp.text();
+      // allorigins wraps in JSON
+      let html = raw;
+      try { const j = JSON.parse(raw); if (j.contents) html = j.contents; } catch {}
+      if (html.includes('og:image') || html.includes('<title')) return html;
+    } catch { /* try next */ }
+  }
+  return null;
+}
 
 async function fetchItchGameByUrl(itchUrl) {
   if (!itchUrl) return null;
   const url = itchUrl.trim().replace(/\/+$/, '');
 
   // ── Pass 1: Scrape cover image directly from the game page ──
-  try {
-    const pageResp = await fetch(ITCH_PAGE_PROXY + encodeURIComponent(url), {
-      signal: AbortSignal.timeout(14000),
-    });
-    if (pageResp.ok) {
-      const html = await pageResp.text();
-      // og:image — try both attribute orderings
-      const coverMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
-        || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
-      if (coverMatch) {
-        // og:title — itch often omits it; fall back to <title> then <h1>
-        const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)
-          || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i);
-        const pageTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-        const h1Title   = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-        const rawTitle  = ogTitle ? ogTitle[1] : (pageTitle ? pageTitle[1] : (h1Title ? h1Title[1] : null));
-        // Strip " by Username" suffix itch.io appends
-        const title = rawTitle ? rawTitle.replace(/\s+by\s+.+$/i, '').trim() : null;
-        return { url, cover_url: coverMatch[1], title };
-      }
+  const html = await fetchItchPage(url);
+  if (html) {
+    // og:image — try both attribute orderings
+    const coverMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+      || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+    if (coverMatch) {
+      // og:title — itch often omits it; fall back to <title> then <h1>
+      const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)
+        || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i);
+      const pageTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const h1Title   = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+      const rawTitle  = ogTitle ? ogTitle[1] : (pageTitle ? pageTitle[1] : (h1Title ? h1Title[1] : null));
+      // Strip " by Username" suffix itch.io appends
+      const title = rawTitle ? rawTitle.replace(/\s+by\s+.+$/i, '').trim() : null;
+      return { url, cover_url: coverMatch[1], title };
     }
-  } catch { /* fall through */ }
+  }
 
   // ── Pass 2: API search by slug (fallback for popular games) ──
   const subMatch = url.match(/https?:\/\/([^.]+)\.itch\.io\/([^\/\?#\s]+)/i);
@@ -3564,9 +3583,21 @@ let fsImages = [];
 let fsIdx = 0;
 
 function isVideoUrl(src) {
+  if (!src) return false;
   return /\.(mp4|webm|ogg)($|\?)/i.test(src)
     || /gamevideos/i.test(src)
-    || /video[_-]normalized/i.test(src);
+    || /video[_-]normalized/i.test(src)
+    // ScreenScraper image.php URLs with media=video or media=video-normalized
+    || /[?&]media=video/i.test(src);
+}
+
+// Proxy a URL if it's from screenscraper.fr (images need CORS proxy too)
+function mediaProxyUrl(src) {
+  if (!src) return src;
+  if (src.includes('screenscraper.fr') && !src.startsWith(SS_CORS_PROXY)) {
+    return SS_CORS_PROXY + encodeURIComponent(src);
+  }
+  return src;
 }
 
 function setFsSlide(idx) {
@@ -3576,12 +3607,13 @@ function setFsSlide(idx) {
   if (!src) {
     contentEl.innerHTML = '<span style="font-size:48px;opacity:.3">🎮</span>';
   } else if (isVideoUrl(src)) {
-    const vsrc = src.startsWith('http') && !src.startsWith(SS_CORS_PROXY) ? SS_CORS_PROXY + src : src;
+    const vsrc = mediaProxyUrl(src);
     contentEl.innerHTML = `<video src="${vsrc}" controls autoplay loop muted playsinline crossorigin="anonymous" style="max-width:94vw;max-height:94vh"
       onerror="this.outerHTML='<div style=\\'display:flex;flex-direction:column;align-items:center;gap:16px\\'><div style=\\'font-size:48px\\'>▶</div><a href=\\'${src}\\' target=\\'_blank\\' rel=\\'noopener\\' style=\\'color:var(--accent)\\'>Open video in new tab</a></div>'"
     ></video>`;
   } else {
-    contentEl.innerHTML = `<img src="${src}" alt="" style="max-width:94vw;max-height:94vh;object-fit:contain">`;
+    const dsrc = mediaProxyUrl(src);
+    contentEl.innerHTML = `<img src="${dsrc}" alt="" style="max-width:94vw;max-height:94vh;object-fit:contain">`;
   }
   el('fs-counter').textContent = fsImages.length > 1 ? (fsIdx + 1) + ' / ' + fsImages.length : '';
   el('fs-prev').style.display = fsImages.length > 1 ? '' : 'none';
@@ -3620,12 +3652,13 @@ function openGameModal(id) {
     if (!src) {
       mainEl.innerHTML = '<span class="gallery-placeholder">🎮</span>';
     } else if (isVideoUrl(src)) {
-      const vsrc = src.startsWith('http') && !src.startsWith(SS_CORS_PROXY) ? SS_CORS_PROXY + src : src;
+      const vsrc = mediaProxyUrl(src);
       mainEl.innerHTML = `<video src="${vsrc}" controls autoplay loop muted playsinline crossorigin="anonymous"
         onerror="this.outerHTML='<div style=\\'display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px\\'><div style=\\'font-size:36px\\'>▶</div><a href=\\'${src}\\' target=\\'_blank\\' rel=\\'noopener\\' style=\\'color:var(--accent);font-size:12px\\'>Open video in new tab</a></div>'"
       ></video>`;
     } else {
-      mainEl.innerHTML = `<img src="${src}" alt="" onerror="this.parentElement.innerHTML='<span class=\\'gallery-placeholder\\'>🎮</span>'">`;
+      const dsrc = mediaProxyUrl(src);
+      mainEl.innerHTML = `<img src="${dsrc}" alt="" onerror="this.parentElement.innerHTML='<span class=\\'gallery-placeholder\\'>🎮</span>'">`;
     }
     // Thumb highlight
     document.querySelectorAll('#modal-gallery-thumbs .gallery-thumb').forEach((t, i) => {
@@ -3642,7 +3675,7 @@ function openGameModal(id) {
     thumbsEl.innerHTML = galleryImages.map((src, i) => {
       const inner = isVideoUrl(src)
         ? `<div class="gallery-thumb-video">▶</div>`
-        : `<img src="${src}" alt="" onerror="this.parentElement.style.display='none'">`;
+        : `<img src="${mediaProxyUrl(src)}" alt="" onerror="this.parentElement.style.display='none'">`;
       return `<div class="gallery-thumb${i === 0 ? ' active' : ''}" data-idx="${i}">${inner}</div>`;
     }).join('');
     thumbsEl.querySelectorAll('.gallery-thumb').forEach(t => {
