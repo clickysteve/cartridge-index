@@ -2365,6 +2365,17 @@ body {
     <div class="modal-body" style="gap:14px">
 
       <div class="settings-section">
+        <div class="settings-section-title">TheGamesDB — Screenshots & Artwork</div>
+        <div class="field-row">
+          <div class="field-label">API Key</div>
+          <input class="field-input" id="tgdb-key" type="text" placeholder="Paste your TheGamesDB API key" autocomplete="off">
+        </div>
+        <div class="field-hint">
+          Free key at <a href="https://api.thegamesdb.net/" target="_blank">api.thegamesdb.net</a> — register, then copy your key from your profile. 3,000 requests/month free.
+        </div>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">ScreenScraper — Metadata & Box Art</div>
         <div class="field-row">
           <div class="field-label">Username</div>
@@ -2491,7 +2502,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.22';
+const APP_VERSION    = 'v0.5.23';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2500,6 +2511,11 @@ const SS_CREDS_KEY   = 'cartridge:ss:creds:v1';
 
 const SS_API        = 'https://www.screenscraper.fr/api2/jeuInfos.php';
 const SS_CORS_PROXY = 'https://corsproxy.io/?';
+
+const TGDB_API      = 'https://api.thegamesdb.net/v1';
+const TGDB_KEY_KEY  = 'cartridge:tgdb:key:v1';
+// Platform IDs in TheGamesDB
+const TGDB_PLATFORMS = { gb: 4, gbc: 41, gba: 5, nes: 7, snes: 6, pocket: 4 };
 
 const ITCH_API_KEY  = '5YGz0Yrp6dKu9oADRV2FUwC7BjGJ54RuGEdNiHHu';
 const ITCH_API      = 'https://itch.io/api/1/' + ITCH_API_KEY;
@@ -2892,6 +2908,68 @@ function getSsCreds() {
   } catch { return {}; }
 }
 function saveSsCreds(c) { localStorage.setItem(SS_CREDS_KEY, JSON.stringify(c)); }
+
+// ── THE GAMES DB ─────────────────────────────────────────
+function getTgdbKey() { return localStorage.getItem(TGDB_KEY_KEY) || ''; }
+function saveTgdbKey(k) { localStorage.setItem(TGDB_KEY_KEY, k); }
+
+async function enrichGameTgdb(game) {
+  const key = getTgdbKey();
+  if (!key || game.tgdbAttempted) return;
+  game.tgdbAttempted = true;
+
+  const platId = TGDB_PLATFORMS[game.platform];
+  if (!platId) return;
+
+  const searchTitle = encodeURIComponent(game.searchOverride || game.title);
+  try {
+    // Step 1: search for the game by title + platform
+    const searchResp = await fetch(
+      `${TGDB_API}/Games/ByGameName?name=${searchTitle}&fields=id,game_title&filter[platform]=${platId}&apikey=${key}`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (!searchResp.ok) { console.warn('[CI] TGDB search failed:', searchResp.status); return; }
+    const searchData = await searchResp.json();
+    const games = searchData?.data?.games;
+    if (!games?.length) { console.log('[CI] TGDB: no match for', game.title); return; }
+
+    // Pick best title match
+    const norm = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const q = norm(game.searchOverride || game.title);
+    let bestId = games[0].id;
+    let bestScore = 0;
+    for (const g of games) {
+      const t = norm(g.game_title);
+      const score = t === q ? 2 : (t.includes(q) || q.includes(t)) ? 1 : 0;
+      if (score > bestScore) { bestScore = score; bestId = g.id; }
+    }
+    game.tgdbId = bestId;
+    console.log('[CI] TGDB matched:', game.title, '→ id', bestId);
+
+    // Step 2: fetch screenshots, fanart, titlescreen
+    const imgResp = await fetch(
+      `${TGDB_API}/Games/Images?games_id=${bestId}&filter[type]=screenshot,fanart,titlescreen&apikey=${key}`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (!imgResp.ok) return;
+    const imgData = await imgResp.json();
+    const baseUrl = imgData?.data?.base_url?.original || 'https://cdn.thegamesdb.net/images/original/';
+    const imgs = imgData?.data?.images?.[String(bestId)] || [];
+    const newUrls = imgs
+      .filter(img => ['screenshot', 'fanart', 'titlescreen'].includes(img.type))
+      .slice(0, 12)
+      .map(img => baseUrl + img.filename);
+
+    if (newUrls.length) {
+      const existing = new Set(game.screenshots || []);
+      newUrls.forEach(u => existing.add(u));
+      game.screenshots = [...existing];
+      console.log('[CI] TGDB: added', newUrls.length, 'images for', game.title);
+    }
+  } catch (e) {
+    console.warn('[CI] TGDB error for', game.title, ':', e.message);
+  }
+}
 
 async function enrichGame(game) {
   const creds = getSsCreds();
@@ -3418,6 +3496,11 @@ async function enrichOneGame(game) {
     }
   }
 
+  // TheGamesDB — screenshots, fanart, title screens
+  if (getTgdbKey() && !game.tgdbAttempted) {
+    await enrichGameTgdb(game);
+  }
+
   // SS for metadata, art, screenshots, and video clips
   const creds = getSsCreds();
   if (creds.user && creds.pass && !game.ssAttempted) {
@@ -3514,7 +3597,27 @@ async function enrichAll(scope) {
     toast('Libretro: ' + libretroHits + '/' + retailNeedArt.length + ' images found.', libretroHits > 0 ? 'ok' : '');
   }
 
-  // ── Pass 3: ScreenScraper (metadata + art for remainder) ──
+  // ── Pass 3: TheGamesDB — screenshots, fanart, title screens ──
+  const tgdbQueue = getTgdbKey()
+    ? visible.filter(g => !g.tgdbAttempted && g.platform !== 'other' && !g.homebrew)
+    : [];
+  if (tgdbQueue.length) {
+    done = 0;
+    for (const game of tgdbQueue) {
+      showProgress('TheGamesDB… ' + done + '/' + tgdbQueue.length, Math.round(done / tgdbQueue.length * 100));
+      await enrichGameTgdb(game);
+      done++;
+      await new Promise(r => setTimeout(r, 200));
+    }
+    renderGames();
+    scheduleSave();
+    const tgdbHits = tgdbQueue.filter(g => g.screenshots?.length).length;
+    toast('TheGamesDB: screenshots found for ' + tgdbHits + '/' + tgdbQueue.length + ' games.', tgdbHits > 0 ? 'ok' : '');
+  } else if (!getTgdbKey()) {
+    toast('Tip: add a TheGamesDB API key in Settings for screenshots & artwork.', '');
+  }
+
+  // ── Pass 4: ScreenScraper (metadata + art for remainder) ──
   // (itch.io retail fallback removed — retail GBC/GBA games don't exist on itch.io
   //  and the API calls just waste rate limit budget.)
   if (!hasSsCreds) {
@@ -4465,15 +4568,17 @@ function updateStars(rating) {
 // ── SETTINGS MODAL ───────────────────────────────────────
 function openSettings() {
   const creds = getSsCreds();
-  el('ss-user').value  = creds.user    || '';
-  el('ss-pass').value  = creds.pass    || '';
-  el('ss-devid').value = creds.devid   || '';
+  el('tgdb-key').value   = getTgdbKey();
+  el('ss-user').value    = creds.user    || '';
+  el('ss-pass').value    = creds.pass    || '';
+  el('ss-devid').value   = creds.devid   || '';
   el('ss-devpass').value = creds.devpass || '';
   el('settings-drive-status').textContent = gapiReady ? 'Connected to Google Drive.' : 'Not connected.';
   el('settings-modal').classList.add('open');
 }
 
 function saveSettings() {
+  saveTgdbKey(el('tgdb-key').value.trim());
   saveSsCreds({
     user:    el('ss-user').value.trim(),
     pass:    el('ss-pass').value.trim(),
@@ -4834,7 +4939,7 @@ function bootstrap() {
       ? getFilteredGames().filter(g => selectedIds.has(g.id))
       : getFilteredGames();
     if (e.shiftKey) {
-      scope.forEach(g => { g.ssAttempted = false; g.ytAttempted = false; g.ytVideoId = null; g.boxArt = null; g.screenshots = []; });
+      scope.forEach(g => { g.ssAttempted = false; g.tgdbAttempted = false; g.boxArt = null; g.screenshots = []; });
       const label = selectedIds.size > 0 ? selectedIds.size + ' selected' : 'visible';
       toast('Art + metadata reset for ' + label + ' games. Running enrich…', 'ok');
     }
@@ -4874,9 +4979,10 @@ function bootstrap() {
     const btn = el('modal-enrich-one');
     btn.disabled = true;
     btn.textContent = '…';
-    game.ssAttempted = false;
-    game.boxArt = null;
-    game.screenshots = [];
+    game.ssAttempted   = false;
+    game.tgdbAttempted = false;
+    game.boxArt        = null;
+    game.screenshots   = [];
     await enrichOneGame(game);
 
     // If homebrew and still no art, try tag browse search + picker
