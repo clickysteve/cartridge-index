@@ -24,12 +24,13 @@
   --accent-dim: rgba(251,146,60,.18);
 
   /* platform colours */
-  --gb:   #22c55e;
-  --gbc:  #e879f9;
-  --gba:  #818cf8;
-  --nes:  #f87171;
-  --snes: #60a5fa;
-  --other:#94a3b8;
+  --gb:     #22c55e;
+  --gbc:    #e879f9;
+  --gba:    #facc15;
+  --nes:    #f87171;
+  --snes:   #60a5fa;
+  --pocket: #f97316;
+  --other:  #94a3b8;
 
   /* status colours */
   --s-unplayed:  #4b5563;
@@ -109,11 +110,12 @@ body {
 }
 .ptab:hover { background: var(--surface-2); color: var(--text); }
 .ptab.active { background: var(--surface-3); border-color: var(--border-2); color: var(--text); }
-.ptab[data-platform="gb"].active   { color: var(--gb);   border-color: var(--gb);   background: rgba(34,197,94,.12); }
-.ptab[data-platform="gbc"].active  { color: var(--gbc);  border-color: var(--gbc);  background: rgba(232,121,249,.12); }
-.ptab[data-platform="gba"].active  { color: var(--gba);  border-color: var(--gba);  background: rgba(129,140,248,.12); }
-.ptab[data-platform="nes"].active  { color: var(--nes);  border-color: var(--nes);  background: rgba(248,113,113,.12); }
-.ptab[data-platform="snes"].active { color: var(--snes); border-color: var(--snes); background: rgba(96,165,250,.12); }
+.ptab[data-platform="gb"].active     { color: var(--gb);     border-color: var(--gb);     background: rgba(34,197,94,.12); }
+.ptab[data-platform="gbc"].active    { color: var(--gbc);    border-color: var(--gbc);    background: rgba(232,121,249,.12); }
+.ptab[data-platform="gba"].active    { color: var(--gba);    border-color: var(--gba);    background: rgba(250,204,21,.12); }
+.ptab[data-platform="nes"].active    { color: var(--nes);    border-color: var(--nes);    background: rgba(248,113,113,.12); }
+.ptab[data-platform="snes"].active   { color: var(--snes);   border-color: var(--snes);   background: rgba(96,165,250,.12); }
+.ptab[data-platform="pocket"].active { color: var(--pocket); border-color: var(--pocket); background: rgba(249,115,22,.12); }
 
 .topbar-actions {
   display: flex;
@@ -1050,13 +1052,14 @@ body {
     <button class="ptab" data-platform="gbc">GBC</button>
     <button class="ptab" data-platform="snes">SNES</button>
     <button class="ptab" data-platform="nes">NES</button>
+    <button class="ptab" data-platform="pocket">POCKET</button>
     <button class="ptab" data-platform="other">Other</button>
   </div>
 
   <div class="topbar-actions">
     <span class="sync-status" id="sync-status"></span>
     <button class="btn btn-primary" id="btn-scan">Scan Pocket</button>
-    <button class="btn" id="btn-enrich" title="Fetch metadata from ScreenScraper" disabled>Enrich</button>
+    <button class="btn" id="btn-enrich" title="Fetch art &amp; metadata for visible games" disabled>Enrich visible</button>
     <button class="btn btn-icon" id="btn-settings" title="Settings">⚙</button>
   </div>
 </header>
@@ -1188,6 +1191,7 @@ body {
     </div>
     <div class="modal-footer">
       <button class="btn" id="modal-delete" style="color:#f87171;margin-right:auto;">Remove</button>
+      <button class="btn" id="modal-enrich-one" title="Re-fetch art &amp; metadata for this game">Enrich</button>
       <button class="btn" id="modal-cancel">Cancel</button>
       <button class="btn btn-primary" id="modal-save">Save</button>
     </div>
@@ -1814,6 +1818,27 @@ async function enrichFallbackArt(game) {
   if (itchUrl) game.boxArt = itchUrl;
 }
 
+// Enrich a single game: libretro first, then SS (for metadata), then itch.io
+async function enrichOneGame(game) {
+  // Always try libretro first — it's reliable and needs no auth
+  if (!game.boxArt) {
+    const url = await libretroArt(game);
+    if (url) game.boxArt = url;
+  }
+
+  // SS for metadata (and SS art if libretro missed)
+  const creds = getSsCreds();
+  if (creds.user && creds.pass && !game.ssAttempted) {
+    await enrichGame(game);
+  }
+
+  // itch.io fallback if still no art
+  if (!game.boxArt) {
+    const url = await itchArt(game);
+    if (url) game.boxArt = url;
+  }
+}
+
 async function enrichAll() {
   const creds = getSsCreds();
   if (!creds.user || !creds.pass) {
@@ -1822,39 +1847,55 @@ async function enrichAll() {
     return;
   }
 
-  const toEnrich = library.games.filter(g => !g.ssAttempted && g.platform !== 'other');
+  // Scope to currently visible (filtered) games that aren't yet enriched
+  const visible = getFilteredGames();
+  const toEnrich = visible.filter(g => !g.ssAttempted && g.platform !== 'other');
+  const needArt  = visible.filter(g => !g.boxArt     && g.platform !== 'other');
+
+  if (toEnrich.length === 0 && needArt.length === 0) {
+    toast('All visible games already enriched.', 'ok');
+    return;
+  }
+
   el('btn-enrich').disabled = true;
   let done = 0;
 
-  // ── Pass 1: ScreenScraper (metadata + art) ──
-  if (toEnrich.length > 0) {
-    for (const game of toEnrich) {
-      showProgress('ScreenScraper… ' + done + '/' + toEnrich.length, Math.round(done / toEnrich.length * 100));
-      const result = await enrichGame(game);
-      if (result === null) break; // rate limit — stop SS pass
-      done++;
-      await new Promise(r => setTimeout(r, 300));
-    }
+  // ── Pass 1: libretro (fast, no auth) ──
+  for (const game of needArt) {
+    showProgress('Libretro thumbnails… ' + done + '/' + needArt.length, Math.round(done / needArt.length * 100));
+    const url = await libretroArt(game);
+    if (url) game.boxArt = url;
+    done++;
   }
 
-  // ── Pass 2: libretro + itch.io fallback art ──
-  const needArt = library.games.filter(g => !g.boxArt && g.platform !== 'other');
-  if (needArt.length > 0) {
-    let artDone = 0;
-    for (const game of needArt) {
-      showProgress('Fetching fallback art… ' + artDone + '/' + needArt.length, Math.round(artDone / needArt.length * 100));
-      await enrichFallbackArt(game);
-      artDone++;
-      await new Promise(r => setTimeout(r, 100));
-    }
+  // ── Pass 2: ScreenScraper (metadata + art for remainder) ──
+  done = 0;
+  for (const game of toEnrich) {
+    showProgress('ScreenScraper… ' + done + '/' + toEnrich.length, Math.round(done / toEnrich.length * 100));
+    const result = await enrichGame(game);
+    if (result === null) break; // rate limit — stop
+    done++;
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  // ── Pass 3: itch.io for anything still missing art ──
+  const stillNoArt = visible.filter(g => !g.boxArt && g.platform !== 'other');
+  done = 0;
+  for (const game of stillNoArt) {
+    showProgress('itch.io fallback… ' + done + '/' + stillNoArt.length, Math.round(done / stillNoArt.length * 100));
+    const url = await itchArt(game);
+    if (url) game.boxArt = url;
+    done++;
+    await new Promise(r => setTimeout(r, 100));
   }
 
   hideProgress();
   renderGames();
   scheduleSave();
   el('btn-enrich').disabled = false;
-  const withArt = library.games.filter(g => g.boxArt).length;
-  toast(done + ' enriched via ScreenScraper · ' + withArt + ' total with art.', 'ok');
+  const withArt = visible.filter(g => g.boxArt).length;
+  const scope = ui.platform !== 'all' ? ui.platform.toUpperCase() : 'visible';
+  toast(withArt + '/' + visible.length + ' ' + scope + ' games have art.', 'ok');
 }
 
 // ── RENDERING ────────────────────────────────────────────
@@ -2305,6 +2346,28 @@ function bootstrap() {
   el('modal-close').addEventListener('click', closeGameModal);
   el('modal-cancel').addEventListener('click', closeGameModal);
   el('modal-save').addEventListener('click', saveGameModal);
+  el('modal-enrich-one').addEventListener('click', async () => {
+    if (!activeGameId) return;
+    const game = library.games.find(g => g.id === activeGameId);
+    if (!game) return;
+    const btn = el('modal-enrich-one');
+    btn.disabled = true;
+    btn.textContent = '…';
+    game.ssAttempted = false; // force re-fetch
+    game.boxArt = null;
+    await enrichOneGame(game);
+    btn.disabled = false;
+    btn.textContent = 'Enrich';
+    // Refresh art in modal
+    const artEl = el('modal-art');
+    if (game.boxArt) {
+      artEl.innerHTML = `<img src="${game.boxArt}" alt="" onerror="this.parentElement.textContent='🎮'">`;
+    }
+    renderGames();
+    scheduleSave();
+    toast(game.boxArt ? 'Art found!' : 'No art found for this game.', game.boxArt ? 'ok' : '');
+  });
+
   el('modal-delete').addEventListener('click', () => {
     if (!activeGameId) return;
     if (!confirm('Remove this game from your library?')) return;
