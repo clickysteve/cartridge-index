@@ -332,7 +332,7 @@ body {
   cursor: pointer;
 }
 
-/* Card hover screenshot overlay */
+/* Card hover overlay — shared by both <img> cycling and <video> preview */
 .card-hover-img {
   position: absolute;
   inset: 0;
@@ -346,6 +346,8 @@ body {
   z-index: 1;
 }
 .game-card:hover .card-hover-img { opacity: 1; }
+/* Video-specific: ensure block display */
+.card-hover-vid { display: block; }
 
 /* Art URL + upload row */
 .art-input-row {
@@ -2424,7 +2426,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.17';
+const APP_VERSION    = 'v0.5.18';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3687,10 +3689,11 @@ function cardHTML(g, isDupe = false) {
 
   // Primary image — respects the art/screenshot toggle
   const allShots = (g.screenshots || []).filter(s => !isVideoUrl(s));
+  const videoShot = (g.screenshots || []).find(s => isVideoUrl(s));
   const firstShot = allShots[0];
   const primarySrc = ui.gridImg === 'shot' ? (firstShot || g.boxArt) : g.boxArt;
 
-  // All images available for hover cycling (exclude the primary to avoid repeating it)
+  // Images for hover cycling (static + GIFs, no videos — videos handled separately via data-video)
   const cycleImgs = ui.gridImg === 'shot'
     ? [g.boxArt, ...allShots.slice(1)].filter(Boolean)
     : allShots.filter(Boolean);
@@ -3700,10 +3703,13 @@ function cardHTML(g, isDupe = false) {
     ? `<img src="${primarySrc}" alt="" loading="lazy" onerror="${errFallback}">`
     : `<div class="card-art-placeholder"><div class="card-art-placeholder-icon">🎮</div><div class="card-art-placeholder-label">${plat.label}</div></div>`;
 
-  // Hover overlay — cycling through available images
+  // data-video: proxied SS video URL (loaded lazily on hover, never in static HTML)
+  const dataVideo = videoShot ? ` data-video="${escHtml(videoProxyUrl(videoShot))}"` : '';
+  // data-imgs: static/GIF cycling images
   const dataImgs = cycleImgs.length ? ` data-imgs="${escHtml(JSON.stringify(cycleImgs))}"` : '';
-  const hoverOverlay = cycleImgs.length
-    ? `<img class="card-hover-img" src="${cycleImgs[0]}" alt="" loading="lazy">`
+  // Static hover overlay — only shown when no video and cycling images exist
+  const hoverOverlay = !videoShot && cycleImgs.length
+    ? `<img class="card-hover-img" src="${escHtml(cycleImgs[0])}" alt="" loading="lazy">`
     : '';
 
   const platformBadge = `<div class="card-platform-badge" style="color:${plat.color}">${plat.label}</div>`;
@@ -3716,7 +3722,7 @@ function cardHTML(g, isDupe = false) {
 
   const meta = [g.year, g.developer].filter(Boolean).join(' · ');
 
-  return `<div class="game-card" data-id="${g.id}"${dataImgs}>
+  return `<div class="game-card" data-id="${g.id}"${dataImgs}${dataVideo}>
     <div class="card-art">
       ${artHTML}
       ${hoverOverlay}
@@ -4521,16 +4527,44 @@ function bootstrap() {
     }
 
     function startCycle(card) {
-      const imgs = parseImgs(card);
-      if (!imgs || imgs.length < 2) return;
-
       hoverCard = card;
       hoverIdx  = 0;
 
-      const overlay = card.querySelector('.card-hover-img');
-      if (!overlay) return;
-      overlay.src = imgs[0];
+      const vidSrc = card.dataset.video;
+      if (vidSrc) {
+        // Video hover: inject a <video> element lazily so we don't create 1000+ video elements upfront
+        let vid = card.querySelector('.card-hover-vid');
+        if (!vid) {
+          vid = document.createElement('video');
+          vid.className = 'card-hover-img card-hover-vid';
+          vid.autoplay = true; vid.loop = true; vid.muted = true; vid.playsInline = true;
+          card.querySelector('.card-art').appendChild(vid);
+        }
+        vid.src = vidSrc;
+        vid.play().catch(() => {
+          // Video failed (e.g. proxy issue) — fall back to image cycling
+          vid.remove();
+          card.removeAttribute('data-video');
+          startCycleImages(card);
+        });
+        return;
+      }
 
+      startCycleImages(card);
+    }
+
+    function startCycleImages(card) {
+      const imgs = parseImgs(card);
+      if (!imgs || imgs.length < 2) return;
+      let overlay = card.querySelector('.card-hover-img');
+      if (!overlay) {
+        // Card had no static overlay (e.g. after video fallback) — create one
+        overlay = document.createElement('img');
+        overlay.className = 'card-hover-img';
+        overlay.alt = '';
+        card.querySelector('.card-art').appendChild(overlay);
+      }
+      overlay.src = imgs[0];
       hoverTimer = setInterval(() => {
         hoverIdx = (hoverIdx + 1) % imgs.length;
         overlay.src = imgs[hoverIdx];
@@ -4539,9 +4573,12 @@ function bootstrap() {
 
     function stopCycle() {
       if (hoverTimer) { clearInterval(hoverTimer); hoverTimer = null; }
-      // Reset overlay to first image so next hover starts fresh
       if (hoverCard) {
-        const overlay = hoverCard.querySelector('.card-hover-img');
+        // Stop and unload any video
+        const vid = hoverCard.querySelector('.card-hover-vid');
+        if (vid) { vid.pause(); vid.removeAttribute('src'); vid.load(); }
+        // Reset static overlay to first image
+        const overlay = hoverCard.querySelector('.card-hover-img:not(.card-hover-vid)');
         const imgs = parseImgs(hoverCard);
         if (overlay && imgs && imgs.length) overlay.src = imgs[0];
       }
