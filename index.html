@@ -171,7 +171,20 @@ body {
   padding: 8px 16px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+.filterbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.filterbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -267,7 +280,8 @@ body {
   border: 1px solid transparent;
   border-radius: 5px;
   color: var(--text-muted);
-  width: 28px; height: 28px;
+  min-width: 28px; height: 28px;
+  padding: 0 6px;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
   font-size: 14px;
@@ -1048,38 +1062,38 @@ body {
 
 <!-- ── FILTERBAR ── -->
 <div class="filterbar">
-  <div class="status-filters" id="status-filters">
-    <button class="sfilt active" data-status="all">All</button>
-    <button class="sfilt" data-status="unplayed"><span class="sfilt-dot"></span>Unplayed</button>
-    <button class="sfilt" data-status="playing"><span class="sfilt-dot"></span>Playing</button>
-    <button class="sfilt" data-status="completed"><span class="sfilt-dot"></span>Completed</button>
-    <button class="sfilt" data-status="dropped"><span class="sfilt-dot"></span>Dropped</button>
+  <div class="filterbar-left">
+    <div class="search-wrap">
+      <span class="search-icon">⌕</span>
+      <input type="text" id="search-input" placeholder="Search…" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="sort-wrap">
+      <span class="sort-label">Sort</span>
+      <select id="sort-select">
+        <option value="title">Title A–Z</option>
+        <option value="title-desc">Title Z–A</option>
+        <option value="platform">Platform</option>
+        <option value="year">Year</option>
+        <option value="status">Status</option>
+        <option value="dateAdded">Date Added</option>
+        <option value="rating">Rating</option>
+      </select>
+    </div>
+    <div class="view-toggle">
+      <button class="vtog active" data-view="grid" title="Grid view">⊞</button>
+      <button class="vtog" data-view="list" title="List view">☰</button>
+    </div>
   </div>
 
-  <div class="filterbar-spacer"></div>
-
-  <div class="sort-wrap">
-    <span class="sort-label">Sort</span>
-    <select id="sort-select">
-      <option value="title">Title A–Z</option>
-      <option value="title-desc">Title Z–A</option>
-      <option value="platform">Platform</option>
-      <option value="year">Year</option>
-      <option value="status">Status</option>
-      <option value="dateAdded">Date Added</option>
-      <option value="rating">Rating</option>
-    </select>
-  </div>
-
-  <div class="search-wrap">
-    <span class="search-icon">⌕</span>
-    <input type="text" id="search-input" placeholder="Search…" autocomplete="off" spellcheck="false">
-  </div>
-
-  <div class="view-toggle">
-    <button class="vtog active" data-view="grid" title="Grid view">⊞</button>
-    <button class="vtog" data-view="list" title="List view">☰</button>
-    <button class="vtog" data-view="stats" title="Stats">◑</button>
+  <div class="filterbar-right">
+    <div class="status-filters" id="status-filters">
+      <button class="sfilt active" data-status="all">All</button>
+      <button class="sfilt" data-status="unplayed"><span class="sfilt-dot"></span>Unplayed</button>
+      <button class="sfilt" data-status="playing"><span class="sfilt-dot"></span>Playing</button>
+      <button class="sfilt" data-status="completed"><span class="sfilt-dot"></span>Completed</button>
+      <button class="sfilt" data-status="dropped"><span class="sfilt-dot"></span>Dropped</button>
+    </div>
+    <button class="vtog" data-view="stats" id="btn-stats" title="Stats">◑</button>
   </div>
 </div>
 
@@ -1266,7 +1280,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.1.0';
+const APP_VERSION    = 'v0.2.0';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2295,14 +2309,18 @@ function bootstrap() {
     btn.classList.add('active');
   });
 
-  // Stars in modal
+  // Stars in modal — save immediately on click
   el('modal-stars').addEventListener('click', e => {
     const star = e.target.closest('.star');
     if (!star) return;
+    const game = library.games.find(g => g.id === activeGameId);
+    if (!game) return;
     const v = Number(star.dataset.v);
-    // Click same star again = clear rating
     const currentLit = document.querySelectorAll('#modal-stars .star.lit').length;
-    updateStars(currentLit === v ? 0 : v);
+    const newRating = currentLit === v ? 0 : v; // click same star = clear
+    game.rating = newRating || null;
+    updateStars(newRating);
+    scheduleSave();
   });
   el('modal-stars').addEventListener('mouseover', e => {
     const star = e.target.closest('.star');
