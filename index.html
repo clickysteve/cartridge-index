@@ -68,6 +68,7 @@ body {
   font-size: 17px;
   font-weight: 800;
   letter-spacing: -.03em;
+  text-decoration: none;
   white-space: nowrap;
   background: linear-gradient(135deg,#fb923c,#f59e0b);
   -webkit-background-clip: text;
@@ -1039,7 +1040,7 @@ body {
 
 <!-- ── TOPBAR ── -->
 <header class="topbar">
-  <div class="topbar-logo">Cartridge Index</div>
+  <a class="topbar-logo" href="https://games.clickysteve.com">Cartridge Index</a>
   <span class="topbar-count" id="topbar-count"></span>
 
   <div class="platform-tabs" id="platform-tabs">
@@ -1092,6 +1093,11 @@ body {
       <button class="sfilt" data-status="playing"><span class="sfilt-dot"></span>Playing</button>
       <button class="sfilt" data-status="completed"><span class="sfilt-dot"></span>Completed</button>
       <button class="sfilt" data-status="dropped"><span class="sfilt-dot"></span>Dropped</button>
+    </div>
+    <div class="art-filters" id="art-filters">
+      <button class="sfilt active" data-art="all">🖼 All</button>
+      <button class="sfilt" data-art="has">Has art</button>
+      <button class="sfilt" data-art="none">No art</button>
     </div>
     <button class="vtog" data-view="stats" id="btn-stats" title="Stats">◑</button>
   </div>
@@ -1331,6 +1337,7 @@ let gapiReady = false;
 let ui = {
   platform: 'all',
   status:   'all',
+  art:      'all',
   sort:     'title',
   search:   '',
   view:     'grid',
@@ -1860,6 +1867,11 @@ function getFilteredGames() {
   if (ui.status !== 'all') {
     games = games.filter(g => g.status === ui.status);
   }
+  if (ui.art === 'has') {
+    games = games.filter(g => !!g.boxArt);
+  } else if (ui.art === 'none') {
+    games = games.filter(g => !g.boxArt);
+  }
   if (ui.search) {
     const q = ui.search.toLowerCase();
     games = games.filter(g =>
@@ -2229,7 +2241,17 @@ function bootstrap() {
     const btn = e.target.closest('.sfilt');
     if (!btn) return;
     ui.status = btn.dataset.status;
-    document.querySelectorAll('.sfilt').forEach(b => b.classList.remove('active'));
+    el('status-filters').querySelectorAll('.sfilt').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderGames();
+  });
+
+  // Art filters
+  el('art-filters').addEventListener('click', e => {
+    const btn = e.target.closest('.sfilt');
+    if (!btn) return;
+    ui.art = btn.dataset.art;
+    el('art-filters').querySelectorAll('.sfilt').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     renderGames();
   });
