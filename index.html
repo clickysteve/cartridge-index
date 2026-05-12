@@ -1275,15 +1275,28 @@ const SS_CREDS_KEY   = 'cartridge:ss:creds:v1';
 
 const SS_API        = 'https://www.screenscraper.fr/api2/jeuInfos.php';
 const SS_CORS_PROXY = 'https://corsproxy.io/?url=';
-const SS_SYSTEMS = { gb: 9, gbc: 10, gba: 12, nes: 3, snes: 4 };
+
+const ITCH_API_KEY  = '5YGz0Yrp6dKu9oADRV2FUwC7BjGJ54RuGEdNiHHu';
+const ITCH_API      = 'https://itch.io/api/1/' + ITCH_API_KEY;
+
+const LIBRETRO_SYSTEMS = {
+  gb:     'Nintendo_-_Game_Boy',
+  gbc:    'Nintendo_-_Game_Boy_Color',
+  gba:    'Nintendo_-_Game_Boy_Advance',
+  nes:    'Nintendo_-_Nintendo_Entertainment_System',
+  snes:   'Nintendo_-_Super_Nintendo_Entertainment_System',
+  pocket: 'Nintendo_-_Game_Boy', // GB Studio games → GB thumbnails
+};
+const SS_SYSTEMS = { gb: 9, gbc: 10, gba: 12, nes: 3, snes: 4, pocket: 9 };
 
 const PLATFORMS = {
-  gb:    { label: 'GB',   color: '#22c55e', exts: ['.gb', '.pocket'] },
-  gbc:   { label: 'GBC',  color: '#e879f9', exts: ['.gbc']           },
-  gba:   { label: 'GBA',  color: '#facc15', exts: ['.gba']           },
-  nes:   { label: 'NES',  color: '#f87171', exts: ['.nes']           },
-  snes:  { label: 'SNES', color: '#60a5fa', exts: ['.sfc','.smc']    },
-  other: { label: '?',    color: '#94a3b8', exts: []                 },
+  gb:     { label: 'GB',     color: '#22c55e', exts: ['.gb']          },
+  gbc:    { label: 'GBC',    color: '#e879f9', exts: ['.gbc']         },
+  gba:    { label: 'GBA',    color: '#facc15', exts: ['.gba']         },
+  nes:    { label: 'NES',    color: '#f87171', exts: ['.nes']         },
+  snes:   { label: 'SNES',   color: '#60a5fa', exts: ['.sfc','.smc'] },
+  pocket: { label: 'POCKET', color: '#f97316', exts: ['.pocket']      },
+  other:  { label: '?',      color: '#94a3b8', exts: []               },
 };
 
 const STATUS_COLORS = {
@@ -1714,6 +1727,58 @@ async function enrichGame(game) {
   }
 }
 
+// ── LIBRETRO THUMBNAILS ──────────────────────────────────
+async function libretroArt(game) {
+  const sys = LIBRETRO_SYSTEMS[game.platform];
+  if (!sys) return null;
+  // Libretro thumbnail naming: title with some chars replaced
+  const safeName = game.title
+    .replace(/[&*/:`<>?\\|]/g, '_') // replace chars invalid in filenames
+    .trim();
+  const url = 'https://raw.githubusercontent.com/libretro-thumbnails/'
+    + sys + '/master/Named_Boxarts/'
+    + encodeURIComponent(safeName) + '.png';
+  try {
+    const resp = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
+    return resp.ok ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── ITCH.IO ART ──────────────────────────────────────────
+async function itchArt(game) {
+  try {
+    const resp = await fetch(
+      ITCH_API + '/search/games?query=' + encodeURIComponent(game.title),
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const match = (data.games || []).find(g =>
+      g.title?.toLowerCase() === game.title.toLowerCase()
+    ) || data.games?.[0];
+    return match?.cover_url || null;
+  } catch {
+    return null;
+  }
+}
+
+// ── FALLBACK ART (libretro → itch.io) ───────────────────
+async function enrichFallbackArt(game) {
+  if (game.boxArt) return; // already has art
+
+  // Try libretro first (retail games)
+  if (!game.homebrew) {
+    const url = await libretroArt(game);
+    if (url) { game.boxArt = url; return; }
+  }
+
+  // Try itch.io (good for homebrew, also catches some retail misses)
+  const itchUrl = await itchArt(game);
+  if (itchUrl) game.boxArt = itchUrl;
+}
+
 async function enrichAll() {
   const creds = getSsCreds();
   if (!creds.user || !creds.pass) {
@@ -1723,28 +1788,38 @@ async function enrichAll() {
   }
 
   const toEnrich = library.games.filter(g => !g.ssAttempted && g.platform !== 'other');
-  if (toEnrich.length === 0) {
-    toast('All games already enriched.', 'ok');
-    return;
-  }
-
   el('btn-enrich').disabled = true;
   let done = 0;
 
-  for (const game of toEnrich) {
-    showProgress('Fetching metadata… ' + done + '/' + toEnrich.length, Math.round(done / toEnrich.length * 100));
-    const result = await enrichGame(game);
-    if (result === null) break; // rate limit / CORS — stop
-    done++;
-    // Small delay to be polite to SS servers
-    await new Promise(r => setTimeout(r, 300));
+  // ── Pass 1: ScreenScraper (metadata + art) ──
+  if (toEnrich.length > 0) {
+    for (const game of toEnrich) {
+      showProgress('ScreenScraper… ' + done + '/' + toEnrich.length, Math.round(done / toEnrich.length * 100));
+      const result = await enrichGame(game);
+      if (result === null) break; // rate limit — stop SS pass
+      done++;
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+
+  // ── Pass 2: libretro + itch.io fallback art ──
+  const needArt = library.games.filter(g => !g.boxArt && g.platform !== 'other');
+  if (needArt.length > 0) {
+    let artDone = 0;
+    for (const game of needArt) {
+      showProgress('Fetching fallback art… ' + artDone + '/' + needArt.length, Math.round(artDone / needArt.length * 100));
+      await enrichFallbackArt(game);
+      artDone++;
+      await new Promise(r => setTimeout(r, 100));
+    }
   }
 
   hideProgress();
   renderGames();
   scheduleSave();
   el('btn-enrich').disabled = false;
-  toast(done + ' games enriched.', 'ok');
+  const withArt = library.games.filter(g => g.boxArt).length;
+  toast(done + ' enriched via ScreenScraper · ' + withArt + ' total with art.', 'ok');
 }
 
 // ── RENDERING ────────────────────────────────────────────
