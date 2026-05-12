@@ -275,7 +275,7 @@ body {
   color: var(--text-muted);
   white-space: nowrap;
 }
-#sort-select, #art-filter-select {
+#sort-select, #art-filter-select, #hb-filter-select {
   background: var(--surface-2);
   border: 1px solid var(--border-2);
   border-radius: 6px;
@@ -377,8 +377,9 @@ body {
 .card-art img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
+  background: var(--surface-1);
 }
 .card-art-placeholder {
   display: flex;
@@ -404,7 +405,8 @@ body {
   position: absolute;
   top: 6px;
   left: 6px;
-  background: rgba(0,0,0,.75);
+  z-index: 2;
+  background: rgba(0,0,0,.8);
   backdrop-filter: blur(4px);
   border-radius: 4px;
   font-size: 9px;
@@ -418,6 +420,7 @@ body {
   position: absolute;
   top: 6px;
   right: 6px;
+  z-index: 2;
   width: 9px; height: 9px;
   border-radius: 50%;
   border: 1.5px solid rgba(0,0,0,.5);
@@ -427,6 +430,7 @@ body {
   position: absolute;
   bottom: 6px;
   right: 6px;
+  z-index: 2;
   background: rgba(251,146,60,.25);
   border: 1px solid rgba(251,146,60,.5);
   border-radius: 3px;
@@ -708,8 +712,8 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .modal-art {
-  width: 64px;
-  height: 86px;
+  width: 90px;
+  height: 120px;
   border-radius: 6px;
   background: var(--surface-2);
   flex-shrink: 0;
@@ -717,14 +721,55 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
-  opacity: .4;
+  font-size: 32px;
+  color: var(--text-muted);
 }
 .modal-art img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  background: var(--surface-1);
 }
+
+/* Screenshot strip */
+.modal-screenshots {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
+}
+.modal-screenshot-thumb {
+  flex-shrink: 0;
+  width: 100px;
+  height: 70px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.modal-screenshot-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--surface-1);
+}
+.modal-itch-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid rgba(251,146,60,.3);
+  background: rgba(251,146,60,.08);
+  border-radius: 6px;
+  padding: 5px 10px;
+  transition: all .15s;
+  font-weight: 600;
+}
+.modal-itch-link:hover { background: rgba(251,146,60,.15); }
 .modal-header-info {
   flex: 1;
   min-width: 0;
@@ -1104,6 +1149,11 @@ body {
       <option value="has">Has art</option>
       <option value="none">No art</option>
     </select>
+    <select id="hb-filter-select" title="Filter by homebrew">
+      <option value="all">🎮 All</option>
+      <option value="yes">Homebrew only</option>
+      <option value="no">Retail only</option>
+    </select>
     <div class="view-toggle">
       <button class="vtog active" data-view="grid" title="Grid view">⊞</button>
       <button class="vtog" data-view="list" title="List view">☰</button>
@@ -1173,6 +1223,17 @@ body {
     </div>
     <div class="modal-body">
       <div class="modal-meta-grid" id="modal-meta-grid"></div>
+
+      <div id="modal-screenshots-row" style="display:none">
+        <div class="field-label">Screenshots</div>
+        <div class="modal-screenshots" id="modal-screenshots"></div>
+      </div>
+
+      <div id="modal-itch-row" style="display:none">
+        <a class="modal-itch-link" id="modal-itch-link" href="#" target="_blank" rel="noopener">
+          🎮 View on itch.io
+        </a>
+      </div>
 
       <div>
         <div class="field-label">Status</div>
@@ -1306,7 +1367,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.3.5';
+const APP_VERSION    = 'v0.4.0';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -1358,6 +1419,7 @@ let ui = {
   platform: 'all',
   status:   'all',
   art:      'all',
+  homebrew: 'all',
   sort:     'title',
   search:   '',
   view:     'grid',
@@ -1909,10 +1971,22 @@ async function itchArt(game) {
     const match = (data.games || []).find(g =>
       g.title?.toLowerCase() === game.title.toLowerCase()
     ) || data.games?.[0];
-    return match?.cover_url || null;
+    if (!match) return null;
+    // Store the itch.io game URL for homebrew linking
+    if (match.url && !game.itchUrl) game.itchUrl = match.url;
+    return match.cover_url || null;
   } catch {
     return null;
   }
+}
+
+// ── LIBRETRO SNAP (screenshot) ───────────────────────────
+// Given a boxart URL from libretro, derives the snap URL and verifies it.
+async function findLibretroSnap(boxArtUrl) {
+  if (!boxArtUrl || !boxArtUrl.includes('libretro-thumbnails')) return null;
+  const snapUrl = boxArtUrl.replace('/Named_Boxarts/', '/Named_Snaps/');
+  const ok = await verifyImageUrl(snapUrl);
+  return ok ? snapUrl : null;
 }
 
 // ── FALLBACK ART (libretro → itch.io) ───────────────────
@@ -1928,21 +2002,34 @@ async function enrichFallbackArt(game) {
   if (itchUrl) game.boxArt = itchUrl;
 }
 
-// Enrich a single game: libretro first, then SS (for metadata), then itch.io
+// Enrich a single game: itch.io first for homebrew, then libretro, then SS, then itch.io
 async function enrichOneGame(game) {
-  // Always try libretro first (with region-variant fallback)
-  if (!game.boxArt) {
-    const url = await findLibretroUrl(game);
+  // For homebrew, try itch.io first (libretro won't have it)
+  if (game.homebrew && !game.boxArt) {
+    const url = await itchArt(game);
     if (url) game.boxArt = url;
   }
 
-  // SS for metadata (and SS art if libretro missed)
+  // Libretro (fast, works for retail GB/GBC/GBA/NES/SNES)
+  if (!game.boxArt) {
+    const url = await findLibretroUrl(game);
+    if (url) {
+      game.boxArt = url;
+      // Try to grab a screenshot from the same libretro repo
+      if (!game.screenshots?.length) {
+        const snap = await findLibretroSnap(url);
+        if (snap) game.screenshots = [snap];
+      }
+    }
+  }
+
+  // SS for metadata (and SS art if still missing)
   const creds = getSsCreds();
   if (creds.user && creds.pass && !game.ssAttempted) {
     await enrichGame(game);
   }
 
-  // itch.io fallback if still no art
+  // itch.io fallback if still no art (non-homebrew retail misses)
   if (!game.boxArt) {
     const url = await itchArt(game);
     if (url) game.boxArt = url;
@@ -1971,32 +2058,64 @@ async function enrichAll() {
   el('btn-enrich').disabled = true;
   let done = 0;
 
-  // ── Pass 1: libretro — parallel batch lookup with region-variant fallback ──
+  // ── Pass 1: itch.io for homebrew games (libretro won't have them) ──
+  const hbNeedArt = needArt.filter(g => g.homebrew);
+  done = 0;
+  for (const game of hbNeedArt) {
+    showProgress('itch.io (homebrew)… ' + done + '/' + hbNeedArt.length, Math.round(done / hbNeedArt.length * 100));
+    const url = await itchArt(game);
+    if (url) game.boxArt = url;
+    done++;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (hbNeedArt.length > 0) renderGames();
+
+  // ── Pass 2: libretro — parallel batch lookup with region-variant fallback ──
   // User ROMs often lack No-Intro region codes so we try several variants.
   // Run in parallel batches of 10 for speed.
+  const retailNeedArt = needArt.filter(g => !g.homebrew);
   let libretroHits = 0;
   const BATCH = 10;
   showProgress('Libretro thumbnails…', 0);
-  for (let i = 0; i < needArt.length; i += BATCH) {
-    const batch = needArt.slice(i, i + BATCH);
+  for (let i = 0; i < retailNeedArt.length; i += BATCH) {
+    const batch = retailNeedArt.slice(i, i + BATCH);
     const urls = await Promise.all(batch.map(g => findLibretroUrl(g)));
-    urls.forEach((url, j) => {
+    await Promise.all(urls.map(async (url, j) => {
       const game = batch[j];
       console.log('[CI] libretro', game.filename, '→', url || 'null');
-      if (url) { game.boxArt = url; libretroHits++; }
-    });
-    showProgress('Libretro thumbnails… ' + Math.min(i + BATCH, needArt.length) + '/' + needArt.length,
-      Math.round(Math.min(i + BATCH, needArt.length) / needArt.length * 100));
+      if (url) {
+        game.boxArt = url;
+        libretroHits++;
+        // Fetch screenshot from libretro in same pass
+        if (!game.screenshots?.length) {
+          const snap = await findLibretroSnap(url);
+          if (snap) game.screenshots = [snap];
+        }
+      }
+    }));
+    showProgress('Libretro thumbnails… ' + Math.min(i + BATCH, retailNeedArt.length) + '/' + retailNeedArt.length,
+      Math.round(Math.min(i + BATCH, retailNeedArt.length) / retailNeedArt.length * 100));
   }
   // Render immediately so art appears without waiting for SS/itch
   renderGames();
   scheduleSave();
 
-  if (needArt.length > 0) {
-    toast('Pass 1: ' + libretroHits + '/' + needArt.length + ' libretro images found.', libretroHits > 0 ? 'ok' : 'err');
+  if (retailNeedArt.length > 0) {
+    toast('Libretro: ' + libretroHits + '/' + retailNeedArt.length + ' images found.', libretroHits > 0 ? 'ok' : '');
   }
 
-  // ── Pass 2: ScreenScraper (metadata + art for remainder) ──
+  // ── Pass 3: itch.io for retail games still missing art ──
+  const stillNoArt = visible.filter(g => !g.boxArt && !g.homebrew && g.platform !== 'other');
+  done = 0;
+  for (const game of stillNoArt) {
+    showProgress('itch.io fallback… ' + done + '/' + stillNoArt.length, Math.round(done / stillNoArt.length * 100));
+    const url = await itchArt(game);
+    if (url) game.boxArt = url;
+    done++;
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // ── Pass 4: ScreenScraper (metadata + art for remainder) ──
   if (!hasSsCreds) {
     toast('Tip: add ScreenScraper credentials in Settings for better metadata.', 'ok');
   }
@@ -2007,17 +2126,6 @@ async function enrichAll() {
     if (result === null) break; // rate limit — stop
     done++;
     await new Promise(r => setTimeout(r, 300));
-  }
-
-  // ── Pass 3: itch.io for anything still missing art ──
-  const stillNoArt = visible.filter(g => !g.boxArt && g.platform !== 'other');
-  done = 0;
-  for (const game of stillNoArt) {
-    showProgress('itch.io fallback… ' + done + '/' + stillNoArt.length, Math.round(done / stillNoArt.length * 100));
-    const url = await itchArt(game);
-    if (url) game.boxArt = url;
-    done++;
-    await new Promise(r => setTimeout(r, 100));
   }
 
   hideProgress();
@@ -2043,6 +2151,11 @@ function getFilteredGames() {
     games = games.filter(g => !!g.boxArt);
   } else if (ui.art === 'none') {
     games = games.filter(g => !g.boxArt);
+  }
+  if (ui.homebrew === 'yes') {
+    games = games.filter(g => !!g.homebrew);
+  } else if (ui.homebrew === 'no') {
+    games = games.filter(g => !g.homebrew);
   }
   if (ui.search) {
     const q = ui.search.toLowerCase();
@@ -2139,7 +2252,7 @@ function cardHTML(g) {
   const stars = g.rating ? '★'.repeat(g.rating) + '☆'.repeat(5 - g.rating) : '';
 
   const artHTML = g.boxArt
-    ? `<img src="${g.boxArt}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-art-placeholder\\'><div class=\\'card-art-placeholder-icon\\'>🎮</div><div class=\\'card-art-placeholder-label\\'>${plat.label}</div></div>'">`
+    ? `<img src="${g.boxArt}" alt="" loading="lazy" onerror="var p=document.createElement('div');p.className='card-art-placeholder';p.innerHTML='<div class=\\'card-art-placeholder-icon\\'>🎮</div><div class=\\'card-art-placeholder-label\\'>${plat.label}</div>';this.replaceWith(p)">`
     : `<div class="card-art-placeholder"><div class="card-art-placeholder-icon">🎮</div><div class="card-art-placeholder-label">${plat.label}</div></div>`;
 
   const platformBadge = `<div class="card-platform-badge" style="color:${plat.color}">${plat.label}</div>`;
@@ -2184,6 +2297,9 @@ function renderStats() {
     ? Math.round(statusCounts.completed / (total - statusCounts.dropped || 1) * 100)
     : 0;
 
+  const homebrew = games.filter(g => g.homebrew).length;
+  const withArt  = games.filter(g => g.boxArt).length;
+
   el('stats-kpis').innerHTML = [
     { value: total, label: 'Total Games', sub: library.lastSync ? 'Last scan ' + library.lastSync.slice(0, 10) : '', color: 'var(--accent)' },
     { value: statusCounts.playing,   label: 'Playing',    color: STATUS_COLORS.playing },
@@ -2191,6 +2307,8 @@ function renderStats() {
     { value: statusCounts.completed, label: 'Completed',  color: STATUS_COLORS.completed },
     { value: completionRate + '%',   label: 'Completion', sub: 'Excl. dropped', color: STATUS_COLORS.completed },
     { value: statusCounts.dropped,   label: 'Dropped',    color: STATUS_COLORS.dropped },
+    { value: homebrew, label: 'Homebrew', sub: 'Custom games', color: 'var(--accent)' },
+    { value: withArt,  label: 'With Art',  sub: Math.round(withArt / (total || 1) * 100) + '% coverage', color: '#60a5fa' },
   ].map(k => `<div class="stat-card">
     <div class="stat-card-value" style="color:${k.color}">${k.value}</div>
     <div class="stat-card-label">${k.label}</div>
@@ -2289,9 +2407,11 @@ function openGameModal(id) {
   // Art
   const artEl = el('modal-art');
   if (game.boxArt) {
-    artEl.innerHTML = `<img src="${game.boxArt}" alt="" onerror="this.parentElement.innerHTML='🎮'">`;
+    artEl.innerHTML = `<img src="${game.boxArt}" alt="" onerror="this.parentElement.textContent='🎮'">`;
+    artEl.style.opacity = '';
   } else {
     artEl.textContent = '🎮';
+    artEl.style.opacity = '.35';
   }
 
   // Title & badges
@@ -2316,6 +2436,29 @@ function openGameModal(id) {
       <div class="modal-meta-value">${escHtml(m.value)}</div>
     </div>
   `).join('');
+
+  // Screenshots
+  const screenshotRow = el('modal-screenshots-row');
+  const screenshotEl  = el('modal-screenshots');
+  const shots = game.screenshots || [];
+  if (shots.length) {
+    screenshotEl.innerHTML = shots.map(s =>
+      `<div class="modal-screenshot-thumb"><img src="${s}" alt="Screenshot" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
+    ).join('');
+    screenshotRow.style.display = '';
+  } else {
+    screenshotRow.style.display = 'none';
+  }
+
+  // itch.io link (for homebrew or any game with an itchUrl)
+  const itchRow  = el('modal-itch-row');
+  const itchLink = el('modal-itch-link');
+  if (game.itchUrl) {
+    itchLink.href = game.itchUrl;
+    itchRow.style.display = '';
+  } else {
+    itchRow.style.display = 'none';
+  }
 
   // Status
   document.querySelectorAll('#modal-status-picker .status-btn').forEach(btn => {
@@ -2422,6 +2565,12 @@ function bootstrap() {
   // Art filter dropdown
   el('art-filter-select').addEventListener('change', e => {
     ui.art = e.target.value;
+    renderGames();
+  });
+
+  // Homebrew filter dropdown
+  el('hb-filter-select').addEventListener('change', e => {
+    ui.homebrew = e.target.value;
     renderGames();
   });
 
@@ -2558,8 +2707,7 @@ function bootstrap() {
     const game = library.games.find(g => g.id === activeGameId);
     if (!game) return;
     const v = Number(star.dataset.v);
-    const currentLit = document.querySelectorAll('#modal-stars .star.lit').length;
-    const newRating = currentLit === v ? 0 : v; // click same star = clear
+    const newRating = (game.rating || 0) === v ? 0 : v; // click same star = clear
     game.rating = newRating || null;
     updateStars(newRating);
     scheduleSave();
