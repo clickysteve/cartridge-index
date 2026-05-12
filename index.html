@@ -1277,12 +1277,12 @@ const SS_API   = 'https://www.screenscraper.fr/api2/jeuInfos.php';
 const SS_SYSTEMS = { gb: 9, gbc: 10, gba: 12, nes: 3, snes: 4 };
 
 const PLATFORMS = {
-  gb:    { label: 'GB',   color: '#22c55e', exts: ['.gb']         },
-  gbc:   { label: 'GBC',  color: '#e879f9', exts: ['.gbc']        },
-  gba:   { label: 'GBA',  color: '#818cf8', exts: ['.gba']        },
-  nes:   { label: 'NES',  color: '#f87171', exts: ['.nes']        },
-  snes:  { label: 'SNES', color: '#60a5fa', exts: ['.sfc','.smc'] },
-  other: { label: '?',    color: '#94a3b8', exts: []              },
+  gb:    { label: 'GB',   color: '#22c55e', exts: ['.gb', '.pocket'] },
+  gbc:   { label: 'GBC',  color: '#e879f9', exts: ['.gbc']           },
+  gba:   { label: 'GBA',  color: '#818cf8', exts: ['.gba']           },
+  nes:   { label: 'NES',  color: '#f87171', exts: ['.nes']           },
+  snes:  { label: 'SNES', color: '#60a5fa', exts: ['.sfc','.smc']    },
+  other: { label: '?',    color: '#94a3b8', exts: []                 },
 };
 
 const STATUS_COLORS = {
@@ -1526,6 +1526,24 @@ async function scanPocket() {
   const found = [];
   await walkDir(assetsDir, found, '');
 
+  // Also scan GB Studio folder for .pocket files (GB Studio homebrew)
+  try {
+    const gbStudioDir = await root.getDirectoryHandle('GB Studio', { create: false });
+    const gbStudioFound = [];
+    await walkDir(gbStudioDir, gbStudioFound, '');
+    // Mark .pocket files as homebrew since they won't be on ScreenScraper
+    for (const g of gbStudioFound) {
+      if (g.filename.toLowerCase().endsWith('.pocket')) {
+        g.homebrew = true;
+        g.ssAttempted = true;
+        g.source = 'gbstudio';
+      }
+      found.push(g);
+    }
+  } catch {
+    // No GB Studio folder — that's fine
+  }
+
   hideProgress();
 
   if (found.length === 0) {
@@ -1537,14 +1555,14 @@ async function scanPocket() {
   const existingMap = new Map(library.games.map(g => [g.id, g]));
   let addedCount = 0;
 
-  for (const { filename, platform } of found) {
+  for (const { filename, platform, source, homebrew, ssAttempted } of found) {
     const id = gameId(platform, filename);
     if (!existingMap.has(id)) {
       existingMap.set(id, {
         id,
         filename,
         platform,
-        source: 'pocket',
+        source: source || 'pocket',
         title: cleanTitle(filename),
         boxArt: null,
         year: null,
@@ -1553,8 +1571,8 @@ async function scanPocket() {
         publisher: null,
         players: null,
         ssId: null,
-        homebrew: false,
-        ssAttempted: false,
+        homebrew: homebrew || false,
+        ssAttempted: ssAttempted || false,
         status: 'unplayed',
         rating: null,
         notes: '',
@@ -1585,7 +1603,7 @@ async function walkDir(dirHandle, results, path) {
       await walkDir(handle, results, path + name + '/');
     } else if (handle.kind === 'file') {
       const platform = platformFromExt(name);
-      if (platform !== 'other' || name.toLowerCase().match(/\.(gb|gbc|gba|nes|sfc|smc|pce|gbc|n64|nds)$/)) {
+      if (platform !== 'other' || name.toLowerCase().match(/\.(gb|gbc|gba|nes|sfc|smc|pocket|pce|n64|nds)$/)) {
         results.push({ filename: name, platform, path: path + name });
       }
     }
