@@ -275,6 +275,56 @@ body {
   color: var(--text-muted);
   white-space: nowrap;
 }
+/* Card size slider */
+.card-size-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+#card-size-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 64px;
+  height: 3px;
+  background: var(--border-2);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+#card-size-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+#card-size-slider::-moz-range-thumb {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
+
+/* Duplicate badge */
+.card-dup-badge {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  z-index: 2;
+  background: rgba(248,113,113,.2);
+  border: 1px solid rgba(248,113,113,.5);
+  border-radius: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: #f87171;
+  padding: 1px 4px;
+}
+
 #sort-select, #art-filter-select, #hb-filter-select {
   background: var(--surface-2);
   border: 1px solid var(--border-2);
@@ -339,8 +389,9 @@ body {
 
 /* ── GAME GRID ──────────────────────────────────── */
 .game-grid {
+  --card-w: 160px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(160px,48%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--card-w), 48%), 1fr));
   gap: 12px;
 }
 .game-grid.view-list {
@@ -798,11 +849,27 @@ body {
   transition: border-color .12s;
 }
 .gallery-thumb.active { border-color: var(--accent); }
-.gallery-thumb img {
+.gallery-thumb img, .gallery-thumb video {
   width: 100%;
   height: 100%;
   object-fit: contain;
   background: var(--surface-1);
+}
+.modal-gallery-main video {
+  max-width: 100%;
+  max-height: 260px;
+  display: block;
+  background: #000;
+}
+.gallery-thumb-video {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-3);
+  width: 100%;
+  height: 100%;
+  font-size: 18px;
+  opacity: .7;
 }
 .modal-itch-link {
   display: inline-flex;
@@ -1203,6 +1270,10 @@ body {
       <option value="yes">Homebrew only</option>
       <option value="no">Retail only</option>
     </select>
+    <div class="card-size-wrap" title="Card size">
+      ⊞
+      <input type="range" id="card-size-slider" min="100" max="300" value="160" step="10">
+    </div>
     <div class="view-toggle">
       <button class="vtog active" data-view="grid" title="Grid view">⊞</button>
       <button class="vtog" data-view="list" title="List view">☰</button>
@@ -1424,7 +1495,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.4.2';
+const APP_VERSION    = 'v0.4.3';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -1880,7 +1951,7 @@ async function enrichGame(game) {
     if (jeu.editeur?.text)     game.publisher  = jeu.editeur.text;
     if (jeu.joueurs?.text)     game.players    = jeu.joueurs.text;
 
-    // Parse box art URL — verify it loads before committing
+    // Parse box art URL
     const boxMedia = jeu.medias?.find(m =>
       m.type === 'box-2D' && preferredRegions.includes(m.region?.toLowerCase())
     ) || jeu.medias?.find(m => m.type === 'box-2D');
@@ -1888,6 +1959,26 @@ async function enrichGame(game) {
       const ssImgOk = await verifyImageUrl(boxMedia.url);
       if (ssImgOk) game.boxArt = boxMedia.url;
       else console.warn('[CI] SS box art URL 404:', boxMedia.url);
+    }
+
+    // Parse screenshots, fanart, and video clips from SS
+    const ssMediaTypes = ['screenshot', 'fanart', 'video-normalized', 'video'];
+    const newMedia = [];
+    for (const type of ssMediaTypes) {
+      const medias = (jeu.medias || []).filter(m => m.type === type);
+      // Pick up to 4 per type; prefer 'wor'/'us' regions for images
+      const sorted = type.startsWith('video')
+        ? medias
+        : [...medias.filter(m => preferredRegions.includes(m.region?.toLowerCase())),
+           ...medias.filter(m => !preferredRegions.includes(m.region?.toLowerCase()))];
+      for (const m of sorted.slice(0, 4)) {
+        if (m.url) newMedia.push(m.url);
+      }
+    }
+    if (newMedia.length) {
+      const existing = new Set(game.screenshots || []);
+      newMedia.forEach(u => existing.add(u));
+      game.screenshots = [...existing];
     }
 
     game.ssId = jeu.id || null;
@@ -1982,12 +2073,14 @@ function bestLibretroMatch(title, names) {
 }
 
 async function findLibretroUrl(game) {
-  const sys = LIBRETRO_SYSTEMS[game.platform];
-  if (!sys) return null;
-  const base = 'https://raw.githubusercontent.com/libretro-thumbnails/' + sys + '/master/Named_Boxarts/';
+  // Pocket (.pocket) files can be GB, GBC, or GBA ROMs — try all three repos
+  const targetPlatforms = game.platform === 'pocket'
+    ? ['gb', 'gbc', 'gba']
+    : [game.platform];
+
   const romBase = game.filename.replace(/\.[^.]+$/, '');
 
-  // Pass 1: try exact filename + common No-Intro region variants (fast)
+  // Pass 1: exact filename + common No-Intro region variants (fast, parallel per platform)
   const variants = [
     romBase,
     romBase + ' (USA)',
@@ -2001,19 +2094,31 @@ async function findLibretroUrl(game) {
     romBase + ' (Japan)',
     romBase + ' (Japan, USA)',
   ];
-  for (const v of variants) {
-    const url = base + encodeLibretroName(v) + '.png';
-    if (await verifyImageUrl(url)) return url;
+
+  for (const plat of targetPlatforms) {
+    const sys = LIBRETRO_SYSTEMS[plat];
+    if (!sys) continue;
+    const base = 'https://raw.githubusercontent.com/libretro-thumbnails/' + sys + '/master/Named_Boxarts/';
+    for (const v of variants) {
+      const url = base + encodeLibretroName(v) + '.png';
+      if (await verifyImageUrl(url)) return url;
+    }
   }
 
-  // Pass 2: fetch the repo tree (once per platform) and fuzzy-match on title
-  const names = await getLibretroBoxartNames(game.platform);
-  const matched = bestLibretroMatch(game.title, names);
-  if (matched) {
-    const url = base + encodeLibretroName(matched) + '.png';
-    console.log('[CI] libretro fuzzy', game.title, '→', matched);
-    return url; // from actual tree listing — guaranteed to exist
+  // Pass 2: fuzzy title match against repo tree (one tree fetch per platform, cached)
+  for (const plat of targetPlatforms) {
+    const sys = LIBRETRO_SYSTEMS[plat];
+    if (!sys) continue;
+    const names = await getLibretroBoxartNames(plat);
+    const matched = bestLibretroMatch(game.title, names);
+    if (matched) {
+      const base = 'https://raw.githubusercontent.com/libretro-thumbnails/' + sys + '/master/Named_Boxarts/';
+      const url = base + encodeLibretroName(matched) + '.png';
+      console.log('[CI] libretro fuzzy', game.title, '→', matched, '@', plat);
+      return url;
+    }
   }
+
   return null;
 }
 
@@ -2048,13 +2153,21 @@ async function itchArt(game) {
   }
 }
 
-// ── LIBRETRO SNAP (screenshot) ───────────────────────────
-// Given a boxart URL from libretro, derives the snap URL and verifies it.
-async function findLibretroSnap(boxArtUrl) {
-  if (!boxArtUrl || !boxArtUrl.includes('libretro-thumbnails')) return null;
-  const snapUrl = boxArtUrl.replace('/Named_Boxarts/', '/Named_Snaps/');
-  const ok = await verifyImageUrl(snapUrl);
-  return ok ? snapUrl : null;
+// ── LIBRETRO MEDIA (screenshot + title screen) ───────────
+// Given a boxart URL, derives Named_Snaps and Named_Titles URLs and returns
+// whichever ones actually exist as an array.
+async function findLibretroMedia(boxArtUrl) {
+  if (!boxArtUrl || !boxArtUrl.includes('libretro-thumbnails')) return [];
+  const snapUrl  = boxArtUrl.replace('/Named_Boxarts/', '/Named_Snaps/');
+  const titleUrl = boxArtUrl.replace('/Named_Boxarts/', '/Named_Titles/');
+  const [snapOk, titleOk] = await Promise.all([
+    verifyImageUrl(snapUrl),
+    verifyImageUrl(titleUrl),
+  ]);
+  const result = [];
+  if (snapOk)  result.push(snapUrl);
+  if (titleOk) result.push(titleUrl);
+  return result;
 }
 
 // ── FALLBACK ART (libretro → itch.io) ───────────────────
@@ -2085,15 +2198,17 @@ async function enrichOneGame(game) {
     const url = await findLibretroUrl(game);
     if (url) {
       game.boxArt = url;
-      // Try to grab a screenshot from the same libretro repo
-      if (!game.screenshots?.length) {
-        const snap = await findLibretroSnap(url);
-        if (snap) game.screenshots = [snap];
+      // Grab snap + title screen from libretro (Named_Snaps + Named_Titles)
+      const libMedia = await findLibretroMedia(url);
+      if (libMedia.length) {
+        const existing = new Set(game.screenshots || []);
+        libMedia.forEach(u => existing.add(u));
+        game.screenshots = [...existing];
       }
     }
   }
 
-  // SS for metadata (and SS art if still missing)
+  // SS for metadata, art, screenshots, and video clips
   const creds = getSsCreds();
   if (creds.user && creds.pass && !game.ssAttempted) {
     await enrichGame(game);
@@ -2156,10 +2271,12 @@ async function enrichAll() {
       if (url) {
         game.boxArt = url;
         libretroHits++;
-        // Fetch screenshot from libretro in same pass
-        if (!game.screenshots?.length) {
-          const snap = await findLibretroSnap(url);
-          if (snap) game.screenshots = [snap];
+        // Fetch snap + title screen from libretro (Named_Snaps + Named_Titles)
+        const libMedia = await findLibretroMedia(url);
+        if (libMedia.length) {
+          const existing = new Set(game.screenshots || []);
+          libMedia.forEach(u => existing.add(u));
+          game.screenshots = [...existing];
         }
       }
     }));
@@ -2299,7 +2416,19 @@ function renderGames() {
   }
   noResults.classList.remove('show');
 
-  grid.innerHTML = games.map(g => cardHTML(g)).join('');
+  // Build duplicate set: games sharing the same title+platform get a DUP badge
+  const titlePlatCount = {};
+  library.games.forEach(g => {
+    const key = g.title.toLowerCase() + '|' + g.platform;
+    titlePlatCount[key] = (titlePlatCount[key] || 0) + 1;
+  });
+  const dupeIds = new Set(
+    library.games
+      .filter(g => titlePlatCount[g.title.toLowerCase() + '|' + g.platform] > 1)
+      .map(g => g.id)
+  );
+
+  grid.innerHTML = games.map(g => cardHTML(g, dupeIds.has(g.id))).join('');
 
   // Attach click listeners
   grid.querySelectorAll('.game-card').forEach(card => {
@@ -2307,7 +2436,7 @@ function renderGames() {
   });
 }
 
-function cardHTML(g) {
+function cardHTML(g, isDupe = false) {
   const plat = PLATFORMS[g.platform] || PLATFORMS.other;
   const statusColor = STATUS_COLORS[g.status] || '#444';
   const stars = g.rating ? '★'.repeat(g.rating) + '☆'.repeat(5 - g.rating) : '';
@@ -2319,6 +2448,7 @@ function cardHTML(g) {
   const platformBadge = `<div class="card-platform-badge" style="color:${plat.color}">${plat.label}</div>`;
   const statusDot     = `<div class="card-status-dot" style="background:${statusColor}"></div>`;
   const hbBadge       = g.homebrew ? '<div class="card-hb-badge">HB</div>' : '';
+  const dupBadge      = isDupe ? '<div class="card-dup-badge">DUP</div>' : '';
 
   // List-view platform chip
   const listPlat = `<div class="view-list-platform" style="color:${plat.color};background:${plat.color}1a">${plat.label}</div>`;
@@ -2331,6 +2461,7 @@ function cardHTML(g) {
       ${platformBadge}
       ${statusDot}
       ${hbBadge}
+      ${dupBadge}
     </div>
     <div class="card-info">
       ${listPlat}
@@ -2469,12 +2600,21 @@ function openGameModal(id) {
   const galleryImages = [game.boxArt, ...(game.screenshots || [])].filter(Boolean);
   let galleryIdx = 0;
 
+  function isVideoUrl(src) {
+    return /\.(mp4|webm|ogg)($|\?)/i.test(src);
+  }
+
   function setGallerySlide(idx) {
     galleryIdx = ((idx % galleryImages.length) + galleryImages.length) % galleryImages.length;
     const src = galleryImages[galleryIdx];
-    el('modal-gallery-main').innerHTML = src
-      ? `<img src="${src}" alt="" onerror="this.parentElement.innerHTML='<span class=\\'gallery-placeholder\\'>🎮</span>'">`
-      : '<span class="gallery-placeholder">🎮</span>';
+    const mainEl = el('modal-gallery-main');
+    if (!src) {
+      mainEl.innerHTML = '<span class="gallery-placeholder">🎮</span>';
+    } else if (isVideoUrl(src)) {
+      mainEl.innerHTML = `<video src="${src}" controls autoplay loop muted playsinline></video>`;
+    } else {
+      mainEl.innerHTML = `<img src="${src}" alt="" onerror="this.parentElement.innerHTML='<span class=\\'gallery-placeholder\\'>🎮</span>'">`;
+    }
     // Thumb highlight
     document.querySelectorAll('#modal-gallery-thumbs .gallery-thumb').forEach((t, i) => {
       t.classList.toggle('active', i === galleryIdx);
@@ -2487,10 +2627,12 @@ function openGameModal(id) {
   // Thumbnails — only show if more than one image
   const thumbsEl = el('modal-gallery-thumbs');
   if (galleryImages.length > 1) {
-    thumbsEl.innerHTML = galleryImages.map((src, i) =>
-      `<div class="gallery-thumb${i === 0 ? ' active' : ''}" data-idx="${i}">` +
-      `<img src="${src}" alt="" onerror="this.parentElement.style.display='none'"></div>`
-    ).join('');
+    thumbsEl.innerHTML = galleryImages.map((src, i) => {
+      const inner = isVideoUrl(src)
+        ? `<div class="gallery-thumb-video">▶</div>`
+        : `<img src="${src}" alt="" onerror="this.parentElement.style.display='none'">`;
+      return `<div class="gallery-thumb${i === 0 ? ' active' : ''}" data-idx="${i}">${inner}</div>`;
+    }).join('');
     thumbsEl.querySelectorAll('.gallery-thumb').forEach(t => {
       t.addEventListener('click', () => setGallerySlide(+t.dataset.idx));
     });
@@ -2683,6 +2825,17 @@ function bootstrap() {
   el('search-input').addEventListener('input', e => {
     ui.search = e.target.value;
     renderGames();
+  });
+
+  // Card size slider
+  const cardSlider = el('card-size-slider');
+  const savedCardSize = parseInt(localStorage.getItem('cartridge:cardSize') || '160', 10);
+  cardSlider.value = savedCardSize;
+  el('game-grid').style.setProperty('--card-w', savedCardSize + 'px');
+  cardSlider.addEventListener('input', () => {
+    const size = +cardSlider.value;
+    el('game-grid').style.setProperty('--card-w', size + 'px');
+    localStorage.setItem('cartridge:cardSize', size);
   });
 
   // View toggle
