@@ -2424,7 +2424,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.15';
+const APP_VERSION    = 'v0.5.16';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3139,33 +3139,7 @@ async function fetchItchGameByUrl(itchUrl) {
     }
   }
 
-  // ── Pass 2: API search by slug (fallback for popular games) ──
-  const subMatch = url.match(/https?:\/\/([^.]+)\.itch\.io\/([^\/\?#\s]+)/i);
-  const pathMatch = !subMatch && url.match(/itch\.io\/(?:games\/)?([^\/\?#\s]+)/i);
-  const username = subMatch ? subMatch[1] : null;
-  const slug     = subMatch ? subMatch[2] : (pathMatch ? pathMatch[1] : null);
-  if (!slug) return null;
-
-  const norm = u => (u || '').toLowerCase().replace(/\/+$/, '').replace(/^https?:\/\//, '//');
-  const target = norm(url);
-  const queries = username
-    ? [username + ' ' + slug.replace(/-/g, ' '), slug.replace(/-/g, ' ')]
-    : [slug.replace(/-/g, ' ')];
-
-  for (const query of queries) {
-    try {
-      const resp = await fetch(
-        SS_CORS_PROXY + ITCH_API + '/search/games?query=' + encodeURIComponent(query),
-        { signal: AbortSignal.timeout(10000) }
-      );
-      if (!resp.ok) continue;
-      const data = await resp.json();
-      const games = data.games || [];
-      const match = games.find(g => norm(g.url) === target)
-        || games.find(g => g.url && norm(g.url).endsWith('/' + slug));
-      if (match) return match;
-    } catch { continue; }
-  }
+  // Page scrape returned no og:image — nothing more we can do
   return null;
 }
 
@@ -5012,18 +4986,14 @@ async function startAuth() {
     tokenClient.requestAccessToken({ prompt: 'consent' });
   });
 
-  // Try silent re-auth first
+  // Try silent re-auth from cached token; otherwise just show sign-in screen
+  // (never call requestAccessToken automatically — browser blocks it as a popup without a user gesture)
   const stored = loadStoredToken();
   if (stored) {
     gapi.client.setToken({ access_token: stored.accessToken });
     await onAuth();
   } else {
     overlay.classList.add('open');
-    try {
-      tokenClient.requestAccessToken({ prompt: '' });
-    } catch {
-      // Silent auth not available — user must click sign-in
-    }
   }
 }
 
