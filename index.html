@@ -65,6 +65,18 @@ body {
   height: 52px;
 }
 
+.topbar-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.topbar-version {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: .02em;
+}
 .topbar-logo {
   font-size: 17px;
   font-weight: 800;
@@ -263,7 +275,7 @@ body {
   color: var(--text-muted);
   white-space: nowrap;
 }
-#sort-select {
+#sort-select, #art-filter-select {
   background: var(--surface-2);
   border: 1px solid var(--border-2);
   border-radius: 6px;
@@ -1042,7 +1054,10 @@ body {
 
 <!-- ── TOPBAR ── -->
 <header class="topbar">
-  <a class="topbar-logo" href="https://games.clickysteve.com">Cartridge Index</a>
+  <div class="topbar-brand">
+    <a class="topbar-logo" href="https://games.clickysteve.com">Cartridge Index</a>
+    <span class="topbar-version" id="app-version-header"></span>
+  </div>
   <span class="topbar-count" id="topbar-count"></span>
 
   <div class="platform-tabs" id="platform-tabs">
@@ -1058,6 +1073,7 @@ body {
 
   <div class="topbar-actions">
     <span class="sync-status" id="sync-status"></span>
+    <button class="btn btn-icon" id="btn-save" title="Save to Google Drive">↑</button>
     <button class="btn btn-primary" id="btn-scan">Scan Pocket</button>
     <button class="btn" id="btn-enrich" title="Fetch art &amp; metadata for visible games" disabled>Enrich visible</button>
     <button class="btn btn-icon" id="btn-settings" title="Settings">⚙</button>
@@ -1083,9 +1099,15 @@ body {
         <option value="rating">Rating</option>
       </select>
     </div>
+    <select id="art-filter-select" title="Filter by art">
+      <option value="all">🖼 All</option>
+      <option value="has">Has art</option>
+      <option value="none">No art</option>
+    </select>
     <div class="view-toggle">
       <button class="vtog active" data-view="grid" title="Grid view">⊞</button>
       <button class="vtog" data-view="list" title="List view">☰</button>
+      <button class="vtog" data-view="stats" id="btn-stats" title="Stats">◑</button>
     </div>
   </div>
 
@@ -1097,12 +1119,6 @@ body {
       <button class="sfilt" data-status="completed"><span class="sfilt-dot"></span>Completed</button>
       <button class="sfilt" data-status="dropped"><span class="sfilt-dot"></span>Dropped</button>
     </div>
-    <div class="art-filters" id="art-filters">
-      <button class="sfilt active" data-art="all">🖼 All</button>
-      <button class="sfilt" data-art="has">Has art</button>
-      <button class="sfilt" data-art="none">No art</button>
-    </div>
-    <button class="vtog" data-view="stats" id="btn-stats" title="Stats">◑</button>
   </div>
 </div>
 
@@ -2266,6 +2282,7 @@ function setView(view) {
 // ── INIT ─────────────────────────────────────────────────
 function bootstrap() {
   el('app-version').textContent = APP_VERSION;
+  el('app-version-header').textContent = APP_VERSION;
 
   // Platform tabs
   el('platform-tabs').addEventListener('click', e => {
@@ -2287,14 +2304,29 @@ function bootstrap() {
     renderGames();
   });
 
-  // Art filters
-  el('art-filters').addEventListener('click', e => {
-    const btn = e.target.closest('.sfilt');
-    if (!btn) return;
-    ui.art = btn.dataset.art;
-    el('art-filters').querySelectorAll('.sfilt').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
+  // Art filter dropdown
+  el('art-filter-select').addEventListener('change', e => {
+    ui.art = e.target.value;
     renderGames();
+  });
+
+  // Manual save button
+  el('btn-save').addEventListener('click', async () => {
+    const btn = el('btn-save');
+    btn.disabled = true;
+    setSyncStatus('Saving…', 'syncing');
+    try {
+      await driveSave(library);
+      const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setSyncStatus('Saved ' + t, 'ok');
+      toast('Saved to Drive.', 'ok');
+    } catch (e) {
+      setSyncStatus('Save failed', 'err');
+      toast('Save failed: ' + e.message, 'err');
+      console.error('[cartridge] manual save failed', e);
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   // Sort
