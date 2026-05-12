@@ -1306,7 +1306,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.2.0';
+const APP_VERSION    = 'v0.3.0';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -1736,7 +1736,7 @@ async function enrichGame(game) {
 
     if (!jeu) {
       game.ssAttempted = true;
-      game.homebrew = true;
+      // Don't mark as homebrew just because SS missed it — only .pocket files are homebrew
       return false;
     }
 
@@ -1784,31 +1784,22 @@ async function enrichGame(game) {
 }
 
 // ── LIBRETRO THUMBNAILS ──────────────────────────────────
-async function libretroArt(game) {
+// No network check — just build the URL and let the img onerror handle 404s.
+// Libretro Named_Boxarts uses the FULL ROM name: "EarthBound (USA).png"
+function libretroArtUrl(game) {
   const sys = LIBRETRO_SYSTEMS[game.platform];
-  if (!sys || game.homebrew) return null;
-
-  // Libretro Named_Boxarts files use the FULL ROM name including region —
-  // e.g. "EarthBound (USA).png" NOT "EarthBound.png"
-  // Try ROM filename (strip extension) first, then clean title as fallback
-  const romBase = game.filename.replace(/\.[^.]+$/, '');
-  const candidates = [...new Set([romBase, game.title])];
-
-  const base = 'https://raw.githubusercontent.com/libretro-thumbnails/'
-    + sys + '/master/Named_Boxarts/';
-
-  for (const name of candidates) {
-    const safeName = name
-      .replace(/[&*/:`<>?\\|]/g, '_')
-      .replace(/\//g, '-')
-      .trim();
-    const url = base + encodeURIComponent(safeName) + '.png';
-    try {
-      const resp = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
-      if (resp.ok) return url;
-    } catch { /* try next */ }
-  }
-  return null;
+  if (!sys) return null;
+  const romBase = game.filename.replace(/\.[^.]+$/, ''); // strip ext only
+  const safeName = romBase
+    .replace(/[&*`<>?\\|]/g, '_')
+    .replace(/\//g, '-')
+    .trim();
+  // encode spaces as %20, leave parens and other chars as-is for GitHub raw
+  const encoded = safeName.split('').map(c =>
+    c === ' ' ? '%20' : c === '#' ? '%23' : c === '%' ? '%25' : c
+  ).join('');
+  return 'https://raw.githubusercontent.com/libretro-thumbnails/'
+    + sys + '/master/Named_Boxarts/' + encoded + '.png';
 }
 
 // ── ITCH.IO ART ──────────────────────────────────────────
@@ -1833,11 +1824,9 @@ async function itchArt(game) {
 async function enrichFallbackArt(game) {
   if (game.boxArt) return; // already has art
 
-  // Try libretro first (retail games)
-  if (!game.homebrew) {
-    const url = await libretroArt(game);
-    if (url) { game.boxArt = url; return; }
-  }
+  // Try libretro first (all games — pocket platform may miss but that's fine)
+  const libUrl = libretroArtUrl(game);
+  if (libUrl) { game.boxArt = libUrl; return; }
 
   // Try itch.io (good for homebrew, also catches some retail misses)
   const itchUrl = await itchArt(game);
@@ -1848,7 +1837,7 @@ async function enrichFallbackArt(game) {
 async function enrichOneGame(game) {
   // Always try libretro first — it's reliable and needs no auth
   if (!game.boxArt) {
-    const url = await libretroArt(game);
+    const url = libretroArtUrl(game);
     if (url) game.boxArt = url;
   }
 
@@ -1889,7 +1878,7 @@ async function enrichAll() {
   // ── Pass 1: libretro (fast, no auth) ──
   for (const game of needArt) {
     showProgress('Libretro thumbnails… ' + done + '/' + needArt.length, Math.round(done / needArt.length * 100));
-    const url = await libretroArt(game);
+    const url = libretroArtUrl(game);
     if (url) game.boxArt = url;
     done++;
   }
