@@ -2214,7 +2214,7 @@ body {
       <div class="settings-section" style="gap:6px">
         <div class="settings-section-title">About</div>
         <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
-          Cartridge Index <span id="app-version">v0.5.10</span><br>
+          Cartridge Index <span id="app-version">v0.5.11</span><br>
           Reads from Analogue Pocket SD card via File System Access API.<br>
           Metadata from <a href="https://www.screenscraper.fr" target="_blank" style="color:var(--accent)">ScreenScraper</a>.<br>
           Library synced to Google Drive appdata.
@@ -2299,7 +2299,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.10';
+const APP_VERSION    = 'v0.5.11';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3035,7 +3035,7 @@ async function fetchItchGameByUrl(itchUrl) {
   return null;
 }
 
-// ── ITCH.IO ART ──────────────────────────────────────────
+// ── ITCH.IO ART (API search — only works for popular games) ──
 async function itchArt(game) {
   try {
     const searchTitle = game.searchOverride || game.title;
@@ -3045,19 +3045,95 @@ async function itchArt(game) {
     );
     if (!resp.ok) return null;
     const data = await resp.json();
-    // Only accept exact title matches — the fallback to [0] was grabbing wrong games
     const titleLower = searchTitle.toLowerCase();
-    const match = (data.games || []).find(g =>
-      g.title?.toLowerCase() === titleLower
-    );
+    const match = (data.games || []).find(g => g.title?.toLowerCase() === titleLower);
     if (!match) return null;
-    // Store the itch.io game URL and auto-flag as homebrew
     if (match.url && !game.itchUrl) game.itchUrl = match.url;
     game.homebrew = true;
     return match.cover_url || null;
   } catch {
     return null;
   }
+}
+
+// ── ITCH TAG BROWSE SEARCH ───────────────────────────────
+// Searches itch.io tag pages (richer coverage than the API).
+// Returns [{url, thumb, title}] candidates.
+const ITCH_TAG_MAP = {
+  gb:     ['game-boy', 'analogue-pocket'],
+  gbc:    ['game-boy-color', 'game-boy', 'analogue-pocket'],
+  gba:    ['game-boy-advance', 'analogue-pocket'],
+  pocket: ['analogue-pocket', 'game-boy', 'game-boy-color'],
+};
+
+async function searchItchByTag(title, platform) {
+  const tags = ITCH_TAG_MAP[platform] || ['game-boy', 'analogue-pocket'];
+  const seen = new Set();
+  const candidates = [];
+
+  for (const tag of tags) {
+    const pageUrl = `https://itch.io/games/tag-${tag}?q=${encodeURIComponent(title)}`;
+    const html = await fetchItchPage(pageUrl);
+    if (!html) continue;
+
+    // Extract title / game-url / thumbnail from game_cell rows
+    // Pattern: cover link href → lazy thumb src → title text
+    const re = /href="(https:\/\/[^"]+\.itch\.io\/[^"]+)"[^>]*>[\s\S]*?data-lazy_src="([^"]+)"[\s\S]*?class="[^"]*title[^"]*"[^>]*>\s*([^<]+?)\s*</g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const [, url, thumb, cTitle] = m;
+      if (seen.has(url) || url.includes('static.itch.io')) continue;
+      // Must be a real game page: subdomain.itch.io/slug
+      if (!/^https:\/\/[^.]+\.itch\.io\/[^/?#]+$/.test(url)) continue;
+      seen.add(url);
+      candidates.push({ url, thumb, title: cTitle.trim() });
+      if (candidates.length >= 12) break;
+    }
+    if (candidates.length >= 12) break;
+  }
+
+  return candidates;
+}
+
+// ── ART PICKER ───────────────────────────────────────────
+// Shows a floating overlay with candidate thumbnails.
+// Returns a Promise resolving to the chosen candidate or null.
+function showArtPicker(candidates, searchTitle) {
+  return new Promise(resolve => {
+    const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center';
+
+    overlay.innerHTML = `
+      <div style="background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:680px;width:92%;max-height:80vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,.6)">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Multiple matches found</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">Searching for &ldquo;<em>${esc(searchTitle)}</em>&rdquo; &mdash; pick the correct game or skip:</div>
+        <div id="art-picker-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:16px"></div>
+        <div style="display:flex;justify-content:flex-end">
+          <button id="art-picker-none" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px">None of these</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+
+    const grid = overlay.querySelector('#art-picker-grid');
+    candidates.forEach(c => {
+      const card = document.createElement('div');
+      card.style.cssText = 'cursor:pointer;border:2px solid var(--border);border-radius:8px;overflow:hidden;transition:border-color .15s;display:flex;flex-direction:column';
+      card.innerHTML = `
+        <img src="${esc(c.thumb)}" style="width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:var(--surface-2)" onerror="this.style.display='none'">
+        <div style="padding:6px 7px;font-size:11px;line-height:1.3;color:var(--text)">${esc(c.title)}</div>`;
+      card.addEventListener('mouseenter', () => { card.style.borderColor = 'var(--accent)'; });
+      card.addEventListener('mouseleave', () => { card.style.borderColor = 'var(--border)'; });
+      card.addEventListener('click', () => { document.body.removeChild(overlay); resolve(c); });
+      grid.appendChild(card);
+    });
+
+    const done = c => { if (overlay.parentNode) document.body.removeChild(overlay); resolve(c); };
+    overlay.querySelector('#art-picker-none').addEventListener('click', () => done(null));
+    overlay.addEventListener('click', e => { if (e.target === overlay) done(null); });
+  });
 }
 
 // ── LIBRETRO MEDIA (screenshot + title screen) ───────────
@@ -4222,16 +4298,49 @@ function bootstrap() {
     const btn = el('modal-enrich-one');
     btn.disabled = true;
     btn.textContent = '…';
-    game.ssAttempted = false; // force re-fetch
+    game.ssAttempted = false;
     game.boxArt = null;
+    game.screenshots = [];
     await enrichOneGame(game);
+
+    // If homebrew and still no art, try tag browse search + picker
+    if (!game.boxArt && game.homebrew) {
+      btn.textContent = 'Searching…';
+      const searchTitle = game.searchOverride || game.title;
+      const candidates = await searchItchByTag(searchTitle, game.platform);
+      if (candidates.length === 1) {
+        // Single result — auto-apply
+        const match = await fetchItchGameByUrl(candidates[0].url);
+        if (match) {
+          if (match.cover_url) game.boxArt = match.cover_url;
+          if (match.title && !game.title) game.title = match.title;
+          if (match.screenshots?.length) game.screenshots = match.screenshots;
+          game.itchUrl = match.url || candidates[0].url;
+          game.homebrew = true;
+        }
+      } else if (candidates.length > 1) {
+        // Multiple results — show picker
+        btn.textContent = 'Waiting…';
+        const picked = await showArtPicker(candidates, searchTitle);
+        if (picked) {
+          const match = await fetchItchGameByUrl(picked.url);
+          if (match) {
+            if (match.cover_url) game.boxArt = match.cover_url;
+            if (match.title && !game.title) game.title = match.title;
+            if (match.screenshots?.length) game.screenshots = match.screenshots;
+            game.itchUrl = match.url || picked.url;
+            game.homebrew = true;
+          }
+        }
+      }
+    }
+
     btn.disabled = false;
     btn.textContent = 'Enrich';
-    // Re-open modal to refresh gallery
     openGameModal(game.id);
     renderGames();
     scheduleSave();
-    toast(game.boxArt ? 'Art found!' : 'No art found for this game.', game.boxArt ? 'ok' : '');
+    toast(game.boxArt ? 'Art found!' : 'No art found — try setting an itch.io URL manually.', game.boxArt ? 'ok' : '');
   });
 
   el('modal-delete').addEventListener('click', () => {
