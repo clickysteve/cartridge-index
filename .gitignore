@@ -1,0 +1,7 @@
+_local/
+.DS_Store
+.AppleDouble
+.LSOverride
+.vscode/
+*.swp
+*.swo
