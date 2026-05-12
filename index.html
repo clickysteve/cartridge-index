@@ -1055,7 +1055,7 @@ body {
 <!-- ── TOPBAR ── -->
 <header class="topbar">
   <div class="topbar-brand">
-    <a class="topbar-logo" href="https://games.clickysteve.com">Cartridge Index</a>
+    <span class="topbar-logo" id="topbar-logo" title="Back to library" style="cursor:pointer">Cartridge Index</span>
     <span class="topbar-version" id="app-version-header"></span>
   </div>
   <span class="topbar-count" id="topbar-count"></span>
@@ -1314,7 +1314,7 @@ const TOKEN_KEY      = 'cartridge:gtoken:v1';
 const SS_CREDS_KEY   = 'cartridge:ss:creds:v1';
 
 const SS_API        = 'https://www.screenscraper.fr/api2/jeuInfos.php';
-const SS_CORS_PROXY = 'https://corsproxy.io/?url=';
+const SS_CORS_PROXY = 'https://api.allorigins.win/get?url=';
 
 const ITCH_API_KEY  = '5YGz0Yrp6dKu9oADRV2FUwC7BjGJ54RuGEdNiHHu';
 const ITCH_API      = 'https://itch.io/api/1/' + ITCH_API_KEY;
@@ -1730,7 +1730,8 @@ async function enrichGame(game) {
       return false;
     }
 
-    const data = await resp.json();
+    const wrapper = await resp.json();
+    const data = typeof wrapper.contents === 'string' ? JSON.parse(wrapper.contents) : wrapper;
     const jeu = data?.response?.jeu;
 
     if (!jeu) {
@@ -1785,20 +1786,29 @@ async function enrichGame(game) {
 // ── LIBRETRO THUMBNAILS ──────────────────────────────────
 async function libretroArt(game) {
   const sys = LIBRETRO_SYSTEMS[game.platform];
-  if (!sys) return null;
-  // Libretro thumbnail naming: title with some chars replaced
-  const safeName = game.title
-    .replace(/[&*/:`<>?\\|]/g, '_') // replace chars invalid in filenames
-    .trim();
-  const url = 'https://raw.githubusercontent.com/libretro-thumbnails/'
-    + sys + '/master/Named_Boxarts/'
-    + encodeURIComponent(safeName) + '.png';
-  try {
-    const resp = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
-    return resp.ok ? url : null;
-  } catch {
-    return null;
+  if (!sys || game.homebrew) return null;
+
+  // Libretro Named_Boxarts files use the FULL ROM name including region —
+  // e.g. "EarthBound (USA).png" NOT "EarthBound.png"
+  // Try ROM filename (strip extension) first, then clean title as fallback
+  const romBase = game.filename.replace(/\.[^.]+$/, '');
+  const candidates = [...new Set([romBase, game.title])];
+
+  const base = 'https://raw.githubusercontent.com/libretro-thumbnails/'
+    + sys + '/master/Named_Boxarts/';
+
+  for (const name of candidates) {
+    const safeName = name
+      .replace(/[&*/:`<>?\\|]/g, '_')
+      .replace(/\//g, '-')
+      .trim();
+    const url = base + encodeURIComponent(safeName) + '.png';
+    try {
+      const resp = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
+      if (resp.ok) return url;
+    } catch { /* try next */ }
   }
+  return null;
 }
 
 // ── ITCH.IO ART ──────────────────────────────────────────
@@ -2345,6 +2355,9 @@ function bootstrap() {
   document.querySelectorAll('.vtog').forEach(btn => {
     btn.addEventListener('click', () => setView(btn.dataset.view));
   });
+
+  // Logo — go to grid view without reload
+  el('topbar-logo').addEventListener('click', () => setView('grid'));
 
   // Scan
   el('btn-scan').addEventListener('click', scanPocket);
