@@ -2521,7 +2521,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.32';
+const APP_VERSION    = 'v0.5.33';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2975,7 +2975,9 @@ async function enrichGameTgdb(game) {
   const platId = TGDB_PLATFORMS[game.platform];
   if (!platId) return;
 
-  const searchTitle = encodeURIComponent(game.searchOverride || game.title);
+  // Strip leading "NNN " number prefixes from filenames (e.g. "044 MegaMan & Bass" → "MegaMan & Bass")
+  const rawTitle = game.searchOverride || game.title;
+  const searchTitle = encodeURIComponent(rawTitle.replace(/^\d+\s+/, ''));
   try {
     // Step 1: search for the game by title + platform (1 request)
     const searchResp = await fetch(
@@ -3036,7 +3038,10 @@ async function enrichGameSgdb(game) {
   if (!key || game.sgdbAttempted) return;
   game.sgdbAttempted = true;
 
-  const searchTitle = encodeURIComponent(game.searchOverride || game.title);
+  // Strip leading "NNN " number prefixes (e.g. "044 MegaMan & Bass" → "MegaMan & Bass")
+  const rawTitle = game.searchOverride || game.title;
+  const cleanTitle = rawTitle.replace(/^\d+\s+/, '');
+  const searchTitle = encodeURIComponent(cleanTitle);
   try {
     // Route through CF Worker proxy; worker forwards Authorization header to SGDB
     const authHeaders = { Authorization: `Bearer ${key}` };
@@ -3106,25 +3111,8 @@ async function enrichGame(game) {
 
   try {
     const ssUrl = SS_API + '?' + params.toString();
-    // Try each proxy in turn — SS blocks most public CORS proxies.
-    let resp = null;
-    for (let attempt = 0; attempt < SS_PROXY_LIST.length; attempt++) {
-      const idx = (ssCorsProxyIdx + attempt) % SS_PROXY_LIST.length;
-      try {
-        const r = await fetch(SS_PROXY_LIST[idx](ssUrl), { signal: AbortSignal.timeout(10000) });
-        if (r.ok || r.status === 430 || r.status === 431) {
-          ssCorsProxyIdx = idx; // remember which proxy worked
-          resp = r;
-          break;
-        }
-      } catch (e) { /* proxy failed — try next */ }
-    }
-
-    if (!resp) {
-      console.warn('[CI] SS: all proxies failed for', game.title);
-      game.ssAttempted = true;
-      return false;
-    }
+    // Route through CF Worker (or allorigins fallback) via corsProxy()
+    const resp = await fetch(corsProxy(ssUrl), { signal: AbortSignal.timeout(12000) });
 
     if (!resp.ok) {
       if (resp.status === 430 || resp.status === 431) {
