@@ -2503,7 +2503,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.39';
+const APP_VERSION    = 'v0.5.40';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3157,7 +3157,7 @@ async function enrichGameTgdb(game) {
 
     // Step 2: fetch screenshots, fanart, titlescreen (1 request)
     const imgResp = await fetch(
-      corsProxy(`${TGDB_API}/Games/Images?games_id=${bestId}&filter[type]=screenshot,fanart,titlescreen&apikey=${key}`),
+      corsProxy(`${TGDB_API}/Games/Images?games_id=${bestId}&filter[type]=screenshot,titlescreen&apikey=${key}`),
       { signal: AbortSignal.timeout(10000) }
     );
     addTgdbUsage(1);
@@ -3166,7 +3166,7 @@ async function enrichGameTgdb(game) {
     const baseUrl = imgData?.data?.base_url?.original || 'https://cdn.thegamesdb.net/images/original/';
     const imgs = imgData?.data?.images?.[String(bestId)] || [];
     const newUrls = imgs
-      .filter(img => ['screenshot', 'fanart', 'titlescreen'].includes(img.type))
+      .filter(img => ['screenshot', 'titlescreen'].includes(img.type))
       .slice(0, 12)
       .map(img => baseUrl + img.filename);
 
@@ -3257,22 +3257,19 @@ async function enrichGameSgdb(game) {
     game.sgdbId = best.id;
     console.log('[CI] SGDB matched:', game.title, '→', best.name, '(id', best.id + ')');
 
-    // Step 2: fetch grids (portrait box art) + heroes (landscape banner) in parallel
-    const [gridsResp, heroesResp] = await Promise.all([
-      fetch(corsProxy(`${SGDB_API}/grids/game/${best.id}?dimensions=600x900,342x482&limit=6`), { headers: authHeaders, signal: AbortSignal.timeout(8000) }),
-      fetch(corsProxy(`${SGDB_API}/heroes/game/${best.id}?limit=6`),                           { headers: authHeaders, signal: AbortSignal.timeout(8000) }),
-    ]);
+    // Step 2: fetch grids (portrait box art) only — heroes tend to be fan art
+    const gridsResp = await fetch(
+      corsProxy(`${SGDB_API}/grids/game/${best.id}?dimensions=600x900,342x482&nsfw=false&humor=false&limit=6`),
+      { headers: authHeaders, signal: AbortSignal.timeout(8000) }
+    );
 
     const newUrls = [];
     if (gridsResp.ok) {
       const grids = (await gridsResp.json())?.data || [];
       // Use first grid as box art if we don't have one yet
       if (!game.boxArt && grids[0]?.url) game.boxArt = grids[0].url;
-      grids.slice(0, 4).forEach(g => { if (g.url) newUrls.push(g.url); });
-    }
-    if (heroesResp.ok) {
-      const heroes = (await heroesResp.json())?.data || [];
-      heroes.slice(0, 4).forEach(h => { if (h.url) newUrls.push(h.url); });
+      // Add remaining grids as alternate box art in the gallery
+      grids.slice(1, 4).forEach(g => { if (g.url) newUrls.push(g.url); });
     }
 
     if (newUrls.length) {
