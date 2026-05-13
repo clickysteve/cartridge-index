@@ -2493,7 +2493,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.43';
+const APP_VERSION    = 'v0.5.44';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3518,7 +3518,15 @@ async function findLibretroUrl(game) {
     if (matched) {
       const base = 'https://raw.githubusercontent.com/libretro-thumbnails/' + sys + '/master/Named_Boxarts/';
       const url = base + encodeLibretroName(matched) + '.png';
-      console.log('[CI] libretro fuzzy', game.title, '→', matched, '@', plat);
+      // Update game title to the libretro-matched name (stripped of region tags)
+      // so downstream enrichers (TGDB etc.) search with the correct title
+      const cleanedMatch = cleanTitle(matched);
+      if (cleanedMatch && cleanedMatch !== game.title) {
+        console.log('[CI] libretro fuzzy', game.title, '→', matched, '@ ', plat, '— updating title to:', cleanedMatch);
+        game.title = cleanedMatch;
+      } else {
+        console.log('[CI] libretro fuzzy', game.title, '→', matched, '@', plat);
+      }
       return url;
     }
   }
