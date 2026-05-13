@@ -2394,8 +2394,13 @@ body {
           <div class="field-label">Developer Password <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
           <input class="field-input" id="ss-devpass" type="password" placeholder="Your SS devpassword">
         </div>
+        <div class="settings-divider"></div>
+        <div class="field-row">
+          <div class="field-label">CORS Proxy URL <span style="color:var(--text-muted);font-weight:400">(required for SS to work)</span></div>
+          <input class="field-input" id="ss-proxy" type="text" placeholder="https://your-worker.yourname.workers.dev/?url=">
+        </div>
         <div class="field-hint">
-          No developer account yet? <a href="https://www.screenscraper.fr/index.php?action=developers" target="_blank">Register at screenscraper.fr</a> — free, approved quickly.
+          SS blocks all public proxies. Deploy a free <a href="https://workers.cloudflare.com" target="_blank">Cloudflare Worker</a> and paste its URL here (e.g. <code style="font-size:10px">https://my-proxy.user.workers.dev/?url=</code>). The worker code is in the app README.
         </div>
       </div>
 
@@ -2502,7 +2507,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.28';
+const APP_VERSION    = 'v0.5.29';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -4564,18 +4569,26 @@ function openSettings() {
   el('ss-pass').value    = creds.pass    || '';
   el('ss-devid').value   = creds.devid   || '';
   el('ss-devpass').value = creds.devpass || '';
+  el('ss-proxy').value   = creds.proxy   || '';
   el('settings-drive-status').textContent = gapiReady ? 'Connected to Google Drive.' : 'Not connected.';
   el('settings-modal').classList.add('open');
 }
 
 function saveSettings() {
   saveTgdbKey(el('tgdb-key').value.trim());
+  const proxy = el('ss-proxy').value.trim();
   saveSsCreds({
     user:    el('ss-user').value.trim(),
     pass:    el('ss-pass').value.trim(),
     devid:   el('ss-devid').value.trim(),
     devpass: el('ss-devpass').value.trim(),
+    proxy,
   });
+  // If a custom proxy is set, put it first in the list so it's tried first
+  if (proxy) {
+    SS_PROXY_LIST.unshift(url => proxy + encodeURIComponent(url));
+    ssCorsProxyIdx = 0;
+  }
   el('settings-modal').classList.remove('open');
   toast('Settings saved.', 'ok');
   if (library.games.length > 0) el('btn-enrich').disabled = false;
@@ -4682,6 +4695,13 @@ function downloadFile(filename, content, type) {
 function bootstrap() {
   el('app-version').textContent = APP_VERSION;
   el('app-version-header').textContent = APP_VERSION;
+
+  // Apply saved custom SS proxy (prepend so it's tried first)
+  const savedProxy = getSsCreds().proxy;
+  if (savedProxy) {
+    SS_PROXY_LIST.unshift(url => savedProxy + encodeURIComponent(url));
+    ssCorsProxyIdx = 0;
+  }
 
   // Platform tabs
   el('platform-tabs').addEventListener('click', e => {
