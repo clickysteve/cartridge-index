@@ -2521,7 +2521,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.33';
+const APP_VERSION    = 'v0.5.34';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3023,6 +3023,49 @@ async function enrichGameTgdb(game) {
       newUrls.forEach(u => existing.add(u));
       game.screenshots = [...existing];
       console.log('[CI] TGDB: added', newUrls.length, 'images for', game.title);
+    }
+
+    // Step 3: fetch game metadata — year, genre, developer, publisher (1 request)
+    // Only fetch if we're still missing some metadata
+    const needsMeta = !game.year || !game.genre || !game.developer || !game.publisher;
+    if (needsMeta && getTgdbUsage().count < 900) {
+      const metaResp = await fetch(
+        corsProxy(`${TGDB_API}/Games/ByGameID?id=${bestId}&fields=players,publishers,developers,genres,overview,release_date&include=publishers,developers,genres&apikey=${key}`),
+        { signal: AbortSignal.timeout(10000) }
+      );
+      addTgdbUsage(1);
+      if (metaResp.ok) {
+        const metaData = await metaResp.json();
+        const g = metaData?.data?.games?.[bestId] || metaData?.data?.games?.[String(bestId)] || Object.values(metaData?.data?.games || {})[0];
+        if (g) {
+          // Release year (format: "YYYY-MM-DD" or "YYYY")
+          if (!game.year && g.release_date) {
+            const yr = String(g.release_date).slice(0, 4);
+            if (/^\d{4}$/.test(yr)) game.year = yr;
+          }
+          // Genre — from included genres map
+          const genresMap = metaData?.include?.genres?.data || metaData?.data?.genres || {};
+          if (!game.genre && g.genres?.length) {
+            const genreEntry = genresMap[String(g.genres[0])];
+            if (genreEntry?.name) game.genre = genreEntry.name;
+          }
+          // Developer
+          const devsMap = metaData?.include?.developers?.data || metaData?.data?.developers || {};
+          if (!game.developer && g.developers?.length) {
+            const devEntry = devsMap[String(g.developers[0])];
+            if (devEntry?.name) game.developer = devEntry.name;
+          }
+          // Publisher
+          const pubsMap = metaData?.include?.publishers?.data || metaData?.data?.publishers || {};
+          if (!game.publisher && g.publishers?.length) {
+            const pubEntry = pubsMap[String(g.publishers[0])];
+            if (pubEntry?.name) game.publisher = pubEntry.name;
+          }
+          // Overview / description
+          if (!game.overview && g.overview) game.overview = g.overview;
+          console.log('[CI] TGDB metadata for', game.title, '— year:', game.year, 'genre:', game.genre, 'dev:', game.developer, 'pub:', game.publisher);
+        }
+      }
     }
   } catch (e) {
     console.warn('[CI] TGDB error for', game.title, ':', e.message);
