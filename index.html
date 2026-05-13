@@ -2493,7 +2493,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.42';
+const APP_VERSION    = 'v0.5.43';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3840,7 +3840,7 @@ async function enrichAll(scope) {
     return;
   }
 
-  console.log('[CI] enrichAll: needArt=' + needArt.length + ' toEnrich=' + toEnrich.length);
+  console.log('[CI] enrichAll: needArt=' + needArt.length);
   el('btn-enrich').disabled = true;
   let done = 0;
 
