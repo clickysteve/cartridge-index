@@ -2401,15 +2401,12 @@ body {
         </div>
         <div class="settings-divider"></div>
         <div class="field-row">
-          <div class="field-label">Developer ID <span style="color:var(--s-dropped);font-weight:400">⚠ Required — without this SS returns 403</span></div>
+          <div class="field-label">Developer ID <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
           <input class="field-input" id="ss-devid" type="text" placeholder="Your SS devid">
         </div>
         <div class="field-row">
-          <div class="field-label">Developer Password <span style="color:var(--s-dropped);font-weight:400">⚠ Required</span></div>
+          <div class="field-label">Developer Password <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
           <input class="field-input" id="ss-devpass" type="password" placeholder="Your SS devpassword">
-        </div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:-8px">
-          Register at <a href="https://www.screenscraper.fr/index.php?action=developers" target="_blank" rel="noopener" style="color:var(--accent)">screenscraper.fr → Developers</a> to get your devid + devpassword. Free, just requires a forum account.
         </div>
         <div class="settings-divider"></div>
         <div class="field-row">
@@ -2524,7 +2521,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.35';
+const APP_VERSION    = 'v0.5.36';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3139,10 +3136,8 @@ async function enrichGameSgdb(game) {
 
 async function enrichGame(game) {
   const creds = getSsCreds();
-  if (!creds.user || !creds.pass) return false;
-  // devid + devpassword are required by SS — without them the API returns 403
-  if (!creds.devid || !creds.devpass) {
-    console.warn('[CI] SS skipped — no devid/devpassword set in Settings. Register at screenscraper.fr/index.php?action=developers');
+  if (!creds.user || !creds.pass) {
+    console.warn('[CI] SS skipped — no username/password in Settings');
     return false;
   }
 
@@ -3150,8 +3145,6 @@ async function enrichGame(game) {
   if (!sysId) { game.ssAttempted = true; return false; }
 
   const params = new URLSearchParams({
-    devid:      creds.devid   || '0',
-    devpassword:creds.devpass || '0',
     softname:   'pocket-collection',
     output:     'json',
     ssid:       creds.user,
@@ -3159,6 +3152,10 @@ async function enrichGame(game) {
     systemeid:  sysId,
     romnom:     game.searchOverride || game.filename,
   });
+  // Only include devid/devpassword if the user has actually set them
+  if (creds.devid)   params.set('devid',       creds.devid);
+  if (creds.devpass) params.set('devpassword', creds.devpass);
+  console.log('[CI] SS call — user:', creds.user, 'devid:', creds.devid || '(none)', 'rom:', game.searchOverride || game.filename);
 
   try {
     const ssUrl = SS_API + '?' + params.toString();
