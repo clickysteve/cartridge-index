@@ -2493,7 +2493,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.44';
+const APP_VERSION    = 'v0.5.45';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2814,13 +2814,14 @@ async function scanPocket() {
   }
 
   const found = [];
-  await walkDir(assetsDir, found, '');
+  const videoMap = new Map(); // stem (lowercase, no ext) → FileSystemFileHandle
+  await walkDir(assetsDir, found, '', videoMap);
 
   // Also scan GB Studio folder for .pocket files (GB Studio homebrew)
   try {
     const gbStudioDir = await root.getDirectoryHandle('GB Studio', { create: false });
     const gbStudioFound = [];
-    await walkDir(gbStudioDir, gbStudioFound, '');
+    await walkDir(gbStudioDir, gbStudioFound, '', videoMap);
     // Mark .pocket files as homebrew since they won't be on ScreenScraper
     for (const g of gbStudioFound) {
       if (g.filename.toLowerCase().endsWith('.pocket')) {
@@ -2884,6 +2885,25 @@ async function scanPocket() {
   library.games = [...existingMap.values()];
   library.lastSync = new Date().toISOString();
   library.sources = ['pocket'];
+
+  // Match videos from the SD card to games and create session blob URLs
+  if (videoMap.size > 0) {
+    let videoCount = 0;
+    for (const game of library.games) {
+      const stem = game.filename.replace(/\.[^.]+$/, '').toLowerCase();
+      const handle = videoMap.get(stem);
+      if (handle) {
+        try {
+          const file = await handle.getFile();
+          // Revoke previous blob URL if any to avoid memory leak
+          if (game.videoBlobUrl) URL.revokeObjectURL(game.videoBlobUrl);
+          game.videoBlobUrl = URL.createObjectURL(file);
+          videoCount++;
+        } catch { /* file handle stale or inaccessible */ }
+      }
+    }
+    if (videoCount > 0) console.log('[CI] Matched', videoCount, 'video snaps from SD card');
+  }
 
   renderGames();
   scheduleSave();
@@ -3062,12 +3082,22 @@ function showScanCleanupPrompt(mergeCandidates, removedOrphans) {
   document.body.appendChild(overlay);
 }
 
-async function walkDir(dirHandle, results, path) {
+async function walkDir(dirHandle, results, path, videoMap) {
   for await (const [name, handle] of dirHandle.entries()) {
     // Skip macOS metadata files (._filename, .DS_Store, etc.)
     if (name.startsWith('._') || name === '.DS_Store' || name.startsWith('.')) continue;
     if (handle.kind === 'directory') {
-      await walkDir(handle, results, path + name + '/');
+      // Collect MP4s from videos/ subfolders into videoMap
+      if (name.toLowerCase() === 'videos' && videoMap) {
+        for await (const [vname, vhandle] of handle.entries()) {
+          if (vhandle.kind === 'file' && vname.toLowerCase().endsWith('.mp4')) {
+            const stem = vname.replace(/\.mp4$/i, '').toLowerCase();
+            if (!videoMap.has(stem)) videoMap.set(stem, vhandle);
+          }
+        }
+      } else {
+        await walkDir(handle, results, path + name + '/', videoMap);
+      }
     } else if (handle.kind === 'file') {
       const platform = platformFromExt(name);
       if (platform !== 'other' || name.toLowerCase().match(/\.(gb|gbc|gba|nes|sfc|smc|pocket|pce|n64|nds)$/)) {
@@ -4464,10 +4494,10 @@ let fsIdx = 0;
 
 function isVideoUrl(src) {
   if (!src) return false;
-  return /\.(mp4|webm|ogg)($|\?)/i.test(src)
+  return src.startsWith('blob:')           // SD card blob URLs (MP4 snaps)
+    || /\.(mp4|webm|ogg)($|\?)/i.test(src)
     || /gamevideos/i.test(src)
     || /video[_-]normalized/i.test(src)
-    // ScreenScraper image.php URLs with media=video or media=video-normalized
     || /[?&]media=video/i.test(src);
 }
 
@@ -4529,8 +4559,9 @@ function openGameModal(id) {
 
   const plat = PLATFORMS[game.platform] || PLATFORMS.other;
 
-  // ── Gallery (box art + screenshots) ──
+  // ── Gallery (video snap first, then box art + screenshots) ──
   const galleryImages = [
+    game.videoBlobUrl,   // SD card video snap — session only, shown first
     game.boxArt,
     ...(game.screenshots || []),
   ].filter(Boolean);
