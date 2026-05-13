@@ -2502,7 +2502,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.25';
+const APP_VERSION    = 'v0.5.26';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3071,6 +3071,8 @@ async function enrichGame(game) {
 
     // Parse screenshots, fanart, and video clips from SS
     // Videos last so images load first in gallery
+    const allMediaTypes = [...new Set((jeu.medias || []).map(m => m.type))];
+    console.log('[CI] SS medias for', game.title, '— types found:', allMediaTypes);
     const ssMediaTypes = [
       'screenshot', 'fanart', 'title-screen',
       'box-2D-side', 'wheel', 'mixrbv1',
@@ -3089,6 +3091,9 @@ async function enrichGame(game) {
         if (m.url) newMedia.push(m.url);
       }
     }
+    const videoUrls = newMedia.filter(u => isVideoUrl(u));
+    console.log('[CI] SS videos for', game.title, ':', videoUrls.length, videoUrls);
+    console.log('[CI] SS total media collected:', newMedia.length, '(images:', newMedia.length - videoUrls.length, ', videos:', videoUrls.length, ')');
     if (newMedia.length) {
       const existing = new Set(game.screenshots || []);
       newMedia.forEach(u => existing.add(u));
@@ -4946,8 +4951,11 @@ function bootstrap() {
     const btn = el('modal-enrich-one');
     btn.disabled = true;
     btn.textContent = '…';
+    // Full reset — clear everything so we get a fresh pull from all sources
     game.ssAttempted   = false;
     game.tgdbAttempted = false;
+    game.ssId          = null;
+    game.tgdbId        = null;
     game.boxArt        = null;
     game.screenshots   = [];
     await enrichOneGame(game);
