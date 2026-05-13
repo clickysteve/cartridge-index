@@ -2401,12 +2401,15 @@ body {
         </div>
         <div class="settings-divider"></div>
         <div class="field-row">
-          <div class="field-label">Developer ID <span style="color:var(--text-muted);font-weight:400">(optional — improves rate limits)</span></div>
-          <input class="field-input" id="ss-devid" type="text" placeholder="Your SS devid (leave blank to use guest)">
+          <div class="field-label">Developer ID <span style="color:var(--s-dropped);font-weight:400">⚠ Required — without this SS returns 403</span></div>
+          <input class="field-input" id="ss-devid" type="text" placeholder="Your SS devid">
         </div>
         <div class="field-row">
-          <div class="field-label">Developer Password <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
+          <div class="field-label">Developer Password <span style="color:var(--s-dropped);font-weight:400">⚠ Required</span></div>
           <input class="field-input" id="ss-devpass" type="password" placeholder="Your SS devpassword">
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:-8px">
+          Register at <a href="https://www.screenscraper.fr/index.php?action=developers" target="_blank" rel="noopener" style="color:var(--accent)">screenscraper.fr → Developers</a> to get your devid + devpassword. Free, just requires a forum account.
         </div>
         <div class="settings-divider"></div>
         <div class="field-row">
@@ -2521,7 +2524,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.34';
+const APP_VERSION    = 'v0.5.35';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3137,6 +3140,11 @@ async function enrichGameSgdb(game) {
 async function enrichGame(game) {
   const creds = getSsCreds();
   if (!creds.user || !creds.pass) return false;
+  // devid + devpassword are required by SS — without them the API returns 403
+  if (!creds.devid || !creds.devpass) {
+    console.warn('[CI] SS skipped — no devid/devpassword set in Settings. Register at screenscraper.fr/index.php?action=developers');
+    return false;
+  }
 
   const sysId = SS_SYSTEMS[game.platform];
   if (!sysId) { game.ssAttempted = true; return false; }
@@ -4369,7 +4377,7 @@ function setFsSlide(idx) {
     ></video>`;
   } else {
     const dsrc = mediaProxyUrl(src);
-    contentEl.innerHTML = `<img src="${dsrc}" alt="" style="max-width:94vw;max-height:94vh;object-fit:contain">`;
+    contentEl.innerHTML = `<img src="${dsrc}" alt="" style="width:100%;height:100%;object-fit:contain;image-rendering:pixelated">`;
   }
   el('fs-counter').textContent = fsImages.length > 1 ? (fsIdx + 1) + ' / ' + fsImages.length : '';
   el('fs-prev').style.display = fsImages.length > 1 ? '' : 'none';
