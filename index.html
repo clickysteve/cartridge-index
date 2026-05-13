@@ -2502,7 +2502,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.27';
+const APP_VERSION    = 'v0.5.28';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2510,7 +2510,14 @@ const TOKEN_KEY      = 'cartridge:gtoken:v1';
 const SS_CREDS_KEY   = 'cartridge:ss:creds:v1';
 
 const SS_API        = 'https://www.screenscraper.fr/api2/jeuInfos.php';
-const SS_CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+// Public CORS proxies — SS blocks them aggressively, so we try each in turn.
+const SS_PROXY_LIST = [
+  url => 'https://api.allorigins.win/raw?url='      + encodeURIComponent(url),
+  url => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url),
+  url => 'https://corsproxy.io/?'                   + encodeURIComponent(url),
+  url => 'https://proxy.cors.sh/'                   + url,
+];
+let ssCorsProxyIdx = 0; // index of the proxy that last worked
 
 const TGDB_API      = 'https://api.thegamesdb.net/v1';
 const TGDB_KEY_KEY  = 'cartridge:tgdb:key:v1';
@@ -3013,11 +3020,25 @@ async function enrichGame(game) {
 
   try {
     const ssUrl = SS_API + '?' + params.toString();
-    // allorigins.win/raw requires the target URL to be encodeURIComponent-encoded
-    const resp = await fetch(SS_CORS_PROXY + encodeURIComponent(ssUrl), {
-      method: 'GET',
-      signal: AbortSignal.timeout(12000),
-    });
+    // Try each proxy in turn — SS blocks most public CORS proxies.
+    let resp = null;
+    for (let attempt = 0; attempt < SS_PROXY_LIST.length; attempt++) {
+      const idx = (ssCorsProxyIdx + attempt) % SS_PROXY_LIST.length;
+      try {
+        const r = await fetch(SS_PROXY_LIST[idx](ssUrl), { signal: AbortSignal.timeout(10000) });
+        if (r.ok || r.status === 430 || r.status === 431) {
+          ssCorsProxyIdx = idx; // remember which proxy worked
+          resp = r;
+          break;
+        }
+      } catch (e) { /* proxy failed — try next */ }
+    }
+
+    if (!resp) {
+      console.warn('[CI] SS: all proxies failed for', game.title);
+      game.ssAttempted = true;
+      return false;
+    }
 
     if (!resp.ok) {
       if (resp.status === 430 || resp.status === 431) {
@@ -3028,7 +3049,6 @@ async function enrichGame(game) {
       return false;
     }
 
-    // allorigins.win/raw returns the response body directly (no wrapper)
     const data = await resp.json();
     const jeu = data?.response?.jeu;
 
@@ -4196,12 +4216,11 @@ function isVideoUrl(src) {
     || /[?&]media=video/i.test(src);
 }
 
-// Proxy SS image URLs through allorigins (adds CORS headers).
-// allorigins.win/raw requires encodeURIComponent on the target URL.
+// Proxy SS image URLs through whichever CORS proxy last worked for the API.
 function mediaProxyUrl(src) {
   if (!src) return src;
-  if (src.includes('screenscraper.fr') && !src.startsWith(SS_CORS_PROXY)) {
-    return SS_CORS_PROXY + encodeURIComponent(src);
+  if (src.includes('screenscraper.fr')) {
+    return SS_PROXY_LIST[ssCorsProxyIdx](src);
   }
   return src;
 }
