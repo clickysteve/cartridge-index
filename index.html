@@ -2502,7 +2502,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.24';
+const APP_VERSION    = 'v0.5.25';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -4201,14 +4201,11 @@ function mediaProxyUrl(src) {
   return src;
 }
 
-// For videos, allorigins raw proxy adds CORS headers without double-encoding
-// and handles binary streaming better than corsproxy.io
+// SS video URLs have credentials embedded as query params and load fine directly
+// in <video> elements (no-cors mode — no Origin header, no CORS needed).
+// Proxying through allorigins breaks streaming because it can't handle Range requests.
 function videoProxyUrl(src) {
-  if (!src) return src;
-  if (src.includes('screenscraper.fr')) {
-    return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(src);
-  }
-  return src;
+  return src || src;
 }
 
 
