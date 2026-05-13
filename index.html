@@ -2390,31 +2390,13 @@ body {
       </div>
 
       <div class="settings-section">
-        <div class="settings-section-title">ScreenScraper — Metadata & Box Art</div>
+        <div class="settings-section-title">CORS Proxy</div>
         <div class="field-row">
-          <div class="field-label">Username</div>
-          <input class="field-input" id="ss-user" type="text" placeholder="Your ScreenScraper username" autocomplete="off">
-        </div>
-        <div class="field-row">
-          <div class="field-label">Password</div>
-          <input class="field-input" id="ss-pass" type="password" placeholder="Your ScreenScraper password" autocomplete="off">
-        </div>
-        <div class="settings-divider"></div>
-        <div class="field-row">
-          <div class="field-label">Developer ID <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
-          <input class="field-input" id="ss-devid" type="text" placeholder="Your SS devid">
-        </div>
-        <div class="field-row">
-          <div class="field-label">Developer Password <span style="color:var(--text-muted);font-weight:400">(optional)</span></div>
-          <input class="field-input" id="ss-devpass" type="password" placeholder="Your SS devpassword">
-        </div>
-        <div class="settings-divider"></div>
-        <div class="field-row">
-          <div class="field-label">CORS Proxy URL <span style="color:var(--text-muted);font-weight:400">(required for SS to work)</span></div>
+          <div class="field-label">Cloudflare Worker URL</div>
           <input class="field-input" id="ss-proxy" type="text" placeholder="https://your-worker.yourname.workers.dev/?url=">
         </div>
         <div class="field-hint">
-          SS blocks all public proxies. Deploy a free <a href="https://workers.cloudflare.com" target="_blank">Cloudflare Worker</a> and paste its URL here (e.g. <code style="font-size:10px">https://my-proxy.user.workers.dev/?url=</code>). The worker code is in the app README.
+          Used to route API requests (TGDB, SGDB) through your own proxy to avoid CORS blocks. Deploy a free <a href="https://workers.cloudflare.com" target="_blank">Cloudflare Worker</a> and paste its URL here.
         </div>
       </div>
 
@@ -2521,7 +2503,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.36';
+const APP_VERSION    = 'v0.5.37';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3675,11 +3657,9 @@ async function enrichOneGame(game) {
     await enrichGameSgdb(game);
   }
 
-  // SS for metadata, art, screenshots, and video clips
-  const creds = getSsCreds();
-  if (creds.user && creds.pass && !game.ssAttempted) {
-    await enrichGame(game);
-  }
+  // SS disabled — re-enable when dev credentials are obtained
+  // const creds = getSsCreds();
+  // if (creds.user && creds.pass && !game.ssAttempted) await enrichGame(game);
 
   // itch.io fallback — homebrew only; only search if still missing art
   if (game.homebrew && !game.boxArt && !game.itchUrl) {
@@ -4685,14 +4665,9 @@ function updateStars(rating) {
 
 // ── SETTINGS MODAL ───────────────────────────────────────
 function openSettings() {
-  const creds = getSsCreds();
   el('sgdb-key').value   = getSgdbKey();
   el('tgdb-key').value   = getTgdbKey();
-  el('ss-user').value    = creds.user    || '';
-  el('ss-pass').value    = creds.pass    || '';
-  el('ss-devid').value   = creds.devid   || '';
-  el('ss-devpass').value = creds.devpass || '';
-  el('ss-proxy').value   = creds.proxy   || '';
+  el('ss-proxy').value   = getSsCreds().proxy || '';
   el('settings-drive-status').textContent = gapiReady ? 'Connected to Google Drive.' : 'Not connected.';
   el('settings-modal').classList.add('open');
 }
@@ -4701,13 +4676,9 @@ function saveSettings() {
   saveSgdbKey(el('sgdb-key').value.trim());
   saveTgdbKey(el('tgdb-key').value.trim());
   const proxy = el('ss-proxy').value.trim();
-  saveSsCreds({
-    user:    el('ss-user').value.trim(),
-    pass:    el('ss-pass').value.trim(),
-    devid:   el('ss-devid').value.trim(),
-    devpass: el('ss-devpass').value.trim(),
-    proxy,
-  });
+  // Preserve any existing SS user creds; just update proxy
+  const creds = getSsCreds();
+  saveSsCreds({ ...creds, proxy });
   // If a custom proxy is set, put it first in the list so it's tried first
   if (proxy) {
     SS_PROXY_LIST.unshift(url => proxy + encodeURIComponent(url));
