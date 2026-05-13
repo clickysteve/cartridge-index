@@ -2365,6 +2365,17 @@ body {
     <div class="modal-body" style="gap:14px">
 
       <div class="settings-section">
+        <div class="settings-section-title">SteamGridDB — Grid Art & Hero Banners</div>
+        <div class="field-row">
+          <div class="field-label">API Key</div>
+          <input class="field-input" id="sgdb-key" type="text" placeholder="Paste your SteamGridDB API key" autocomplete="off">
+        </div>
+        <div class="field-hint">
+          Free key at <a href="https://www.steamgriddb.com/profile/preferences/api" target="_blank">steamgriddb.com</a> — sign in, go to Preferences → API. No monthly limit.
+        </div>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">TheGamesDB — Screenshots & Artwork</div>
         <div class="field-row">
           <div class="field-label">API Key</div>
@@ -2507,7 +2518,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.29';
+const APP_VERSION    = 'v0.5.30';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2528,6 +2539,9 @@ const TGDB_API      = 'https://api.thegamesdb.net/v1';
 const TGDB_KEY_KEY  = 'cartridge:tgdb:key:v1';
 // Platform IDs in TheGamesDB
 const TGDB_PLATFORMS = { gb: 4, gbc: 41, gba: 5, nes: 7, snes: 6, pocket: 4 };
+
+const SGDB_API      = 'https://www.steamgriddb.com/api/v2';
+const SGDB_KEY_KEY  = 'cartridge:sgdb:key:v1';
 
 const ITCH_API_KEY  = '5YGz0Yrp6dKu9oADRV2FUwC7BjGJ54RuGEdNiHHu';
 const ITCH_API      = 'https://itch.io/api/1/' + ITCH_API_KEY;
@@ -3002,6 +3016,65 @@ async function enrichGameTgdb(game) {
     }
   } catch (e) {
     console.warn('[CI] TGDB error for', game.title, ':', e.message);
+  }
+}
+
+// ── STEAMGRIDDB ───────────────────────────────────────────
+function getSgdbKey() { return localStorage.getItem(SGDB_KEY_KEY) || ''; }
+function saveSgdbKey(k) { localStorage.setItem(SGDB_KEY_KEY, k); }
+
+async function enrichGameSgdb(game) {
+  const key = getSgdbKey();
+  if (!key || game.sgdbAttempted) return;
+  game.sgdbAttempted = true;
+
+  const searchTitle = encodeURIComponent(game.searchOverride || game.title);
+  try {
+    // Step 1: find the game
+    const searchResp = await fetch(
+      `${SGDB_API}/search/autocomplete/${searchTitle}`,
+      { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) }
+    );
+    if (!searchResp.ok) { console.warn('[CI] SGDB search failed:', searchResp.status); return; }
+    const results = (await searchResp.json())?.data;
+    if (!results?.length) { console.log('[CI] SGDB: no match for', game.title); return; }
+
+    // Best title match
+    const norm = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const q = norm(game.searchOverride || game.title);
+    let best = results[0];
+    for (const r of results) { if (norm(r.name) === q) { best = r; break; } }
+    game.sgdbId = best.id;
+    console.log('[CI] SGDB matched:', game.title, '→', best.name, '(id', best.id + ')');
+
+    // Step 2: fetch grids (portrait box art) + heroes (landscape banner) in parallel
+    const headers = { Authorization: `Bearer ${key}` };
+    const sig = AbortSignal.timeout(8000);
+    const [gridsResp, heroesResp] = await Promise.all([
+      fetch(`${SGDB_API}/grids/game/${best.id}?dimensions=600x900,342x482&limit=6`, { headers, signal: sig }),
+      fetch(`${SGDB_API}/heroes/game/${best.id}?limit=6`, { headers, signal: AbortSignal.timeout(8000) }),
+    ]);
+
+    const newUrls = [];
+    if (gridsResp.ok) {
+      const grids = (await gridsResp.json())?.data || [];
+      // Use first grid as box art if we don't have one yet
+      if (!game.boxArt && grids[0]?.url) game.boxArt = grids[0].url;
+      grids.slice(0, 4).forEach(g => { if (g.url) newUrls.push(g.url); });
+    }
+    if (heroesResp.ok) {
+      const heroes = (await heroesResp.json())?.data || [];
+      heroes.slice(0, 4).forEach(h => { if (h.url) newUrls.push(h.url); });
+    }
+
+    if (newUrls.length) {
+      const existing = new Set(game.screenshots || []);
+      newUrls.forEach(u => existing.add(u));
+      game.screenshots = [...existing];
+      console.log('[CI] SGDB: added', newUrls.length, 'images for', game.title);
+    }
+  } catch (e) {
+    console.warn('[CI] SGDB error for', game.title, ':', e.message);
   }
 }
 
@@ -3551,6 +3624,11 @@ async function enrichOneGame(game) {
   // TheGamesDB — screenshots, fanart, title screens
   if (getTgdbKey() && !game.tgdbAttempted) {
     await enrichGameTgdb(game);
+  }
+
+  // SteamGridDB — grid art and hero banners (CORS-friendly, no proxy needed)
+  if (getSgdbKey() && !game.sgdbAttempted) {
+    await enrichGameSgdb(game);
   }
 
   // SS for metadata, art, screenshots, and video clips
@@ -4564,6 +4642,7 @@ function updateStars(rating) {
 // ── SETTINGS MODAL ───────────────────────────────────────
 function openSettings() {
   const creds = getSsCreds();
+  el('sgdb-key').value   = getSgdbKey();
   el('tgdb-key').value   = getTgdbKey();
   el('ss-user').value    = creds.user    || '';
   el('ss-pass').value    = creds.pass    || '';
@@ -4575,6 +4654,7 @@ function openSettings() {
 }
 
 function saveSettings() {
+  saveSgdbKey(el('sgdb-key').value.trim());
   saveTgdbKey(el('tgdb-key').value.trim());
   const proxy = el('ss-proxy').value.trim();
   saveSsCreds({
@@ -4950,7 +5030,7 @@ function bootstrap() {
       ? getFilteredGames().filter(g => selectedIds.has(g.id))
       : getFilteredGames();
     if (e.shiftKey) {
-      scope.forEach(g => { g.ssAttempted = false; g.tgdbAttempted = false; g.boxArt = null; g.screenshots = []; });
+      scope.forEach(g => { g.ssAttempted = false; g.tgdbAttempted = false; g.sgdbAttempted = false; g.ssId = null; g.tgdbId = null; g.sgdbId = null; g.boxArt = null; g.screenshots = []; });
       const label = selectedIds.size > 0 ? selectedIds.size + ' selected' : 'visible';
       toast('Art + metadata reset for ' + label + ' games. Running enrich…', 'ok');
     }
@@ -4993,8 +5073,10 @@ function bootstrap() {
     // Full reset — clear everything so we get a fresh pull from all sources
     game.ssAttempted   = false;
     game.tgdbAttempted = false;
+    game.sgdbAttempted = false;
     game.ssId          = null;
     game.tgdbId        = null;
+    game.sgdbId        = null;
     game.boxArt        = null;
     game.screenshots   = [];
     await enrichOneGame(game);
