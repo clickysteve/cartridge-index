@@ -2502,7 +2502,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.23';
+const APP_VERSION    = 'v0.5.24';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2910,12 +2910,32 @@ function getSsCreds() {
 function saveSsCreds(c) { localStorage.setItem(SS_CREDS_KEY, JSON.stringify(c)); }
 
 // ── THE GAMES DB ─────────────────────────────────────────
+const TGDB_USAGE_KEY = 'cartridge:tgdb:usage:v1';
 function getTgdbKey() { return localStorage.getItem(TGDB_KEY_KEY) || ''; }
 function saveTgdbKey(k) { localStorage.setItem(TGDB_KEY_KEY, k); }
+
+function getTgdbUsage() {
+  try {
+    const d = JSON.parse(localStorage.getItem(TGDB_USAGE_KEY) || '{}');
+    const ym = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
+    if (d.month !== ym) return { month: ym, count: 0 };
+    return d;
+  } catch { return { month: new Date().toISOString().slice(0, 7), count: 0 }; }
+}
+function addTgdbUsage(n) {
+  const d = getTgdbUsage();
+  d.count += n;
+  localStorage.setItem(TGDB_USAGE_KEY, JSON.stringify(d));
+}
 
 async function enrichGameTgdb(game) {
   const key = getTgdbKey();
   if (!key || game.tgdbAttempted) return;
+  // Hard cap: stop if we've used 900+ requests this month (leaves buffer below 1000)
+  if (getTgdbUsage().count >= 900) {
+    console.warn('[CI] TGDB monthly limit reached (900). Skipping', game.title);
+    return;
+  }
   game.tgdbAttempted = true;
 
   const platId = TGDB_PLATFORMS[game.platform];
@@ -2923,11 +2943,12 @@ async function enrichGameTgdb(game) {
 
   const searchTitle = encodeURIComponent(game.searchOverride || game.title);
   try {
-    // Step 1: search for the game by title + platform
+    // Step 1: search for the game by title + platform (1 request)
     const searchResp = await fetch(
       `${TGDB_API}/Games/ByGameName?name=${searchTitle}&fields=id,game_title&filter[platform]=${platId}&apikey=${key}`,
       { signal: AbortSignal.timeout(10000) }
     );
+    addTgdbUsage(1);
     if (!searchResp.ok) { console.warn('[CI] TGDB search failed:', searchResp.status); return; }
     const searchData = await searchResp.json();
     const games = searchData?.data?.games;
@@ -2946,11 +2967,12 @@ async function enrichGameTgdb(game) {
     game.tgdbId = bestId;
     console.log('[CI] TGDB matched:', game.title, '→ id', bestId);
 
-    // Step 2: fetch screenshots, fanart, titlescreen
+    // Step 2: fetch screenshots, fanart, titlescreen (1 request)
     const imgResp = await fetch(
       `${TGDB_API}/Games/Images?games_id=${bestId}&filter[type]=screenshot,fanart,titlescreen&apikey=${key}`,
       { signal: AbortSignal.timeout(10000) }
     );
+    addTgdbUsage(1);
     if (!imgResp.ok) return;
     const imgData = await imgResp.json();
     const baseUrl = imgData?.data?.base_url?.original || 'https://cdn.thegamesdb.net/images/original/';
@@ -3602,17 +3624,33 @@ async function enrichAll(scope) {
     ? visible.filter(g => !g.tgdbAttempted && g.platform !== 'other' && !g.homebrew)
     : [];
   if (tgdbQueue.length) {
-    done = 0;
-    for (const game of tgdbQueue) {
-      showProgress('TheGamesDB… ' + done + '/' + tgdbQueue.length, Math.round(done / tgdbQueue.length * 100));
-      await enrichGameTgdb(game);
-      done++;
-      await new Promise(r => setTimeout(r, 200));
+    const usage = getTgdbUsage();
+    const willUse = tgdbQueue.length * 2; // 2 requests per game
+    const remaining = Math.max(0, 900 - usage.count);
+    const canRun = Math.min(tgdbQueue.length, Math.floor(remaining / 2));
+    if (canRun === 0) {
+      toast('TGDB monthly cap reached (' + usage.count + '/900 used). Resets next month.', '');
+    } else {
+      // Warn if large run; auto-proceed for small ones
+      const proceed = canRun < 20 || confirm(
+        `TheGamesDB: about to fetch data for ${canRun} games (~${canRun * 2} requests).\n` +
+        `Used this month: ${usage.count}/900.\n\nProceed?`
+      );
+      if (proceed) {
+        done = 0;
+        for (const game of tgdbQueue.slice(0, canRun)) {
+          showProgress('TheGamesDB… ' + done + '/' + canRun, Math.round(done / canRun * 100));
+          await enrichGameTgdb(game);
+          done++;
+          await new Promise(r => setTimeout(r, 250));
+        }
+        renderGames();
+        scheduleSave();
+        const tgdbHits = tgdbQueue.slice(0, canRun).filter(g => g.screenshots?.length).length;
+        const newUsage = getTgdbUsage();
+        toast('TheGamesDB: images for ' + tgdbHits + '/' + canRun + ' games. ' + newUsage.count + '/900 requests used this month.', tgdbHits > 0 ? 'ok' : '');
+      }
     }
-    renderGames();
-    scheduleSave();
-    const tgdbHits = tgdbQueue.filter(g => g.screenshots?.length).length;
-    toast('TheGamesDB: screenshots found for ' + tgdbHits + '/' + tgdbQueue.length + ' games.', tgdbHits > 0 ? 'ok' : '');
   } else if (!getTgdbKey()) {
     toast('Tip: add a TheGamesDB API key in Settings for screenshots & artwork.', '');
   }
@@ -4146,7 +4184,6 @@ let fsIdx = 0;
 
 function isVideoUrl(src) {
   if (!src) return false;
-  if (src.startsWith('yt:')) return true;       // YouTube via Invidious
   return /\.(mp4|webm|ogg)($|\?)/i.test(src)
     || /gamevideos/i.test(src)
     || /video[_-]normalized/i.test(src)
@@ -4174,36 +4211,6 @@ function videoProxyUrl(src) {
   return src;
 }
 
-// ── YOUTUBE SEARCH EMBED ─────────────────────────────────
-// No API key or third-party service needed.
-// YouTube's listType=search embed works with just a query string.
-
-// Returns a yt: pseudo-URL for the gallery. Two forms:
-//   yt:VIDEO_ID_11     → specific video (if manually stored)
-//   yt:search:QUERY    → search embed (auto-generated from title)
-function ytSearchSlot(game) {
-  if (game.ytVideoId) return 'yt:' + game.ytVideoId;
-  if (game.platform === 'other' || game.homebrew) return null;
-  const plat  = PLATFORMS[game.platform]?.label || '';
-  const query = (game.title || '') + ' ' + plat + ' gameplay';
-  return 'yt:search:' + query;
-}
-
-// Returns the YouTube thumbnail URL (only available for known video IDs)
-function ytThumbUrl(id) {
-  return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
-}
-
-// Build an <iframe> src for a yt: slot
-function ytEmbedSrc(ytSlot) {
-  const part = ytSlot.slice(3); // strip 'yt:'
-  if (part.startsWith('search:')) {
-    const q = encodeURIComponent(part.slice(7));
-    return `https://www.youtube.com/embed?listType=search&list=${q}&autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1`;
-  }
-  // Specific video ID
-  return `https://www.youtube.com/embed/${part}?autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1`;
-}
 
 function setFsSlide(idx) {
   fsIdx = ((idx % fsImages.length) + fsImages.length) % fsImages.length;
@@ -4211,11 +4218,6 @@ function setFsSlide(idx) {
   const contentEl = el('fs-content');
   if (!src) {
     contentEl.innerHTML = '<span style="font-size:48px;opacity:.3">🎮</span>';
-  } else if (src.startsWith('yt:')) {
-    contentEl.innerHTML = `<iframe
-      src="${ytEmbedSrc(src)}"
-      style="width:min(94vw,900px);height:min(53vw,506px);max-height:88vh;border:none;background:#000"
-      allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
   } else if (isVideoUrl(src)) {
     // Use direct URL — corsproxy can't handle video byte-range streaming
     // No crossorigin attribute so browser loads in no-cors mode (works fine for display)
@@ -4239,12 +4241,8 @@ function openFs(images, idx) {
 
 function closeFs() {
   el('gallery-fs').classList.remove('open');
-  // Stop any video or YouTube iframe
   const v = el('fs-content').querySelector('video');
   if (v) { v.pause(); v.src = ''; }
-  // Unload YouTube iframe (stops audio)
-  const ifr = el('fs-content').querySelector('iframe');
-  if (ifr) ifr.src = '';
 }
 
 // ── GAME MODAL ───────────────────────────────────────────
@@ -4255,12 +4253,10 @@ function openGameModal(id) {
 
   const plat = PLATFORMS[game.platform] || PLATFORMS.other;
 
-  // ── Gallery (box art + screenshots + YouTube) ──
-  // ytSearchSlot() always returns a slot for retail games — no enrichment needed
+  // ── Gallery (box art + screenshots) ──
   const galleryImages = [
     game.boxArt,
     ...(game.screenshots || []),
-    ytSearchSlot(game),
   ].filter(Boolean);
   let galleryIdx = 0;
 
@@ -4268,16 +4264,8 @@ function openGameModal(id) {
     galleryIdx = ((idx % galleryImages.length) + galleryImages.length) % galleryImages.length;
     const src = galleryImages[galleryIdx];
     const mainEl = el('modal-gallery-main');
-    // Unload any previous iframe/video before replacing (stops audio)
-    const prevIfr = mainEl.querySelector('iframe');
-    if (prevIfr) prevIfr.src = '';
     if (!src) {
       mainEl.innerHTML = '<span class="gallery-placeholder">🎮</span>';
-    } else if (src.startsWith('yt:')) {
-      mainEl.innerHTML = `<iframe
-        src="${ytEmbedSrc(src)}"
-        style="width:100%;height:100%;border:none;background:#000"
-        allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
     } else if (isVideoUrl(src)) {
       // Direct URL — corsproxy can't stream video; no crossorigin for display-only playback
       mainEl.innerHTML = `<video src="${videoProxyUrl(src)}" controls autoplay loop muted playsinline
@@ -4301,22 +4289,7 @@ function openGameModal(id) {
   if (galleryImages.length > 1) {
     thumbsEl.innerHTML = galleryImages.map((src, i) => {
       let inner;
-      if (src.startsWith('yt:')) {
-        const part = src.slice(3);
-        if (!part.startsWith('search:') && /^[A-Za-z0-9_-]{11}$/.test(part)) {
-          // Known video ID — show real thumbnail
-          inner = `<div style="position:relative;width:100%;height:100%">
-            <img src="${ytThumbUrl(part)}" alt="" style="width:100%;height:100%;object-fit:cover">
-            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);font-size:18px">▶</div>
-          </div>`;
-        } else {
-          // Search-based — YouTube branded placeholder
-          inner = `<div style="width:100%;height:100%;background:#1a1a1a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px">
-            <div style="background:#ff0000;border-radius:4px;width:28px;height:20px;display:flex;align-items:center;justify-content:center;font-size:12px">▶</div>
-            <div style="font-size:8px;color:#aaa;font-weight:700;letter-spacing:.05em">YT</div>
-          </div>`;
-        }
-      } else if (isVideoUrl(src)) {
+      if (isVideoUrl(src)) {
         inner = `<div class="gallery-thumb-video">▶</div>`;
       } else {
         inner = `<img src="${mediaProxyUrl(src)}" alt="" onerror="this.parentElement.style.display='none'">`;
@@ -4517,9 +4490,6 @@ function renderShotList(game) {
 function closeGameModal() {
   el('game-modal').classList.remove('open');
   activeGameId = null;
-  // Unload any YouTube iframe so audio stops
-  const ifr = el('modal-gallery-main').querySelector('iframe');
-  if (ifr) ifr.src = '';
 }
 
 function saveGameModal() {
