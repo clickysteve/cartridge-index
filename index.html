@@ -2503,7 +2503,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.40';
+const APP_VERSION    = 'v0.5.41';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3266,10 +3266,14 @@ async function enrichGameSgdb(game) {
     const newUrls = [];
     if (gridsResp.ok) {
       const grids = (await gridsResp.json())?.data || [];
-      // Use first grid as box art if we don't have one yet
-      if (!game.boxArt && grids[0]?.url) game.boxArt = grids[0].url;
-      // Add remaining grids as alternate box art in the gallery
-      grids.slice(1, 4).forEach(g => { if (g.url) newUrls.push(g.url); });
+      const hadBoxArt = !!game.boxArt;
+      // Only set box art if we don't have one yet
+      if (!hadBoxArt && grids[0]?.url) game.boxArt = grids[0].url;
+      // Only add extra grids to gallery if we had no box art to begin with
+      // (if box art already existed from libretro etc., these are just duplicates)
+      if (!hadBoxArt) {
+        grids.slice(1, 4).forEach(g => { if (g.url) newUrls.push(g.url); });
+      }
     }
 
     if (newUrls.length) {
