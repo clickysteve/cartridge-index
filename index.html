@@ -2503,7 +2503,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.38';
+const APP_VERSION    = 'v0.5.39';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2904,137 +2904,169 @@ async function scanPocket() {
   // Enable enrich button
   el('btn-enrich').disabled = false;
 
-  // Rename detection: for each new entry, look for an existing entry on the same
-  // platform with a similar title but a different filename (possible rename)
-  if (newEntries.length > 0) {
+  // Orphan + rename detection — runs on every scan
+  {
     const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const foundIds = new Set(found.map(f => gameId(f.platform, f.filename)));
-    // "orphaned" = was in library before, not in this scan
+    // Orphans: in library but not on the SD card this scan
     const orphans = library.games.filter(g => !foundIds.has(g.id));
 
-    const mergeCandidates = [];
-    for (const entry of newEntries) {
-      const nNew = norm(entry.title);
-      for (const orphan of orphans) {
-        if (orphan.platform !== entry.platform) continue;
-        const nOld = norm(orphan.title);
-        // Fuzzy: one title contains the other, or they share 80%+ chars
-        const longer = Math.max(nNew.length, nOld.length);
-        const shorter = Math.min(nNew.length, nOld.length);
-        const overlap = nNew.includes(nOld) || nOld.includes(nNew);
-        const similar = overlap || (shorter / longer >= 0.8);
-        if (similar && nNew !== nOld) {
-          mergeCandidates.push({ newEntry: entry, orphan });
+    if (orphans.length > 0) {
+      // For each orphan, check if a new entry looks like a rename of it
+      const matchedOrphanIds = new Set();
+      const mergeCandidates = [];
+
+      for (const entry of newEntries) {
+        const nNew = norm(entry.title);
+        for (const orphan of orphans) {
+          if (orphan.platform !== entry.platform) continue;
+          const nOld = norm(orphan.title);
+          const longer = Math.max(nNew.length, nOld.length);
+          const shorter = Math.min(nNew.length, nOld.length);
+          const overlap = nNew.includes(nOld) || nOld.includes(nNew);
+          const similar = overlap || (shorter / longer >= 0.8);
+          if (similar) {
+            mergeCandidates.push({ newEntry: entry, orphan });
+            matchedOrphanIds.add(orphan.id);
+          }
         }
       }
-    }
 
-    if (mergeCandidates.length > 0) {
-      showMergePrompt(mergeCandidates);
+      // Orphans with no rename match = genuinely removed from SD card
+      const removedOrphans = orphans.filter(o => !matchedOrphanIds.has(o.id));
+
+      if (mergeCandidates.length > 0 || removedOrphans.length > 0) {
+        showScanCleanupPrompt(mergeCandidates, removedOrphans);
+      }
     }
   }
 }
 
-function showMergePrompt(candidates) {
-  // Build a simple modal-style toast with merge options
+function mergeGameData(target, source) {
+  // Transfer all enriched/user data from source → target
+  target.title       = source.title;
+  target.boxArt      = source.boxArt;
+  target.screenshots = source.screenshots || [];
+  target.year        = source.year;
+  target.genre       = source.genre;
+  target.developer   = source.developer;
+  target.publisher   = source.publisher;
+  target.players     = source.players;
+  target.overview    = source.overview;
+  target.status      = source.status;
+  target.rating      = source.rating;
+  target.notes       = source.notes;
+  target.tags        = source.tags;
+  target.itchUrl     = source.itchUrl;
+  target.ssId        = source.ssId;
+  target.tgdbId      = source.tgdbId;
+  target.sgdbId      = source.sgdbId;
+  target.ssAttempted    = source.ssAttempted;
+  target.tgdbAttempted  = source.tgdbAttempted;
+  target.sgdbAttempted  = source.sgdbAttempted;
+  target.dateAdded   = source.dateAdded;
+  target.lastPlayed  = source.lastPlayed;
+}
+
+function showScanCleanupPrompt(mergeCandidates, removedOrphans) {
   const overlay = document.createElement('div');
-  overlay.style.cssText = `position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:16px`;
+  overlay.style.cssText = `position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;padding:16px`;
 
   const box = document.createElement('div');
-  box.style.cssText = `background:var(--surface-1);border:1px solid var(--border-2);border-radius:12px;padding:24px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:16px;max-height:80vh;overflow-y:auto`;
+  box.style.cssText = `background:var(--surface-1);border:1px solid var(--border-2);border-radius:12px;padding:24px;max-width:560px;width:100%;display:flex;flex-direction:column;gap:20px;max-height:85vh;overflow-y:auto`;
 
-  const title = document.createElement('div');
-  title.style.cssText = `font-size:15px;font-weight:700;color:var(--text)`;
-  title.textContent = `Possible renamed game${candidates.length > 1 ? 's' : ''} detected`;
-  box.appendChild(title);
+  const close = () => document.body.removeChild(overlay);
 
-  const sub = document.createElement('div');
-  sub.style.cssText = `font-size:12px;color:var(--text-dim);margin-top:-8px`;
-  sub.textContent = 'These new files look like renamed versions of existing library entries. Merge to transfer art, metadata, ratings and notes across.';
-  box.appendChild(sub);
+  // ── Section: Renames ──────────────────────────────────
+  const mergeChecks = [];
+  if (mergeCandidates.length > 0) {
+    const h = document.createElement('div');
+    h.innerHTML = `<div style="font-size:14px;font-weight:700;color:var(--text)">Renamed file${mergeCandidates.length > 1 ? 's' : ''} detected</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:4px">These new files look like renamed versions of existing entries. Merge to carry art, metadata, rating and notes across.</div>`;
+    box.appendChild(h);
 
-  const checks = [];
-
-  for (const { newEntry, orphan } of candidates) {
-    const row = document.createElement('div');
-    row.style.cssText = `background:var(--surface-2);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:6px`;
-
-    const label = document.createElement('label');
-    label.style.cssText = `display:flex;align-items:flex-start;gap:10px;cursor:pointer`;
-
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = true;
-    cb.style.cssText = `margin-top:3px;flex-shrink:0;accent-color:var(--accent)`;
-    checks.push({ cb, newEntry, orphan });
-
-    const text = document.createElement('div');
-    text.style.cssText = `font-size:12px;line-height:1.6`;
-    text.innerHTML = `
-      <span style="color:var(--text-muted)">Old name:</span> <span style="color:var(--text-dim)">${escHtml(orphan.filename)}</span><br>
-      <span style="color:var(--text-muted)">New name:</span> <span style="color:var(--text)">${escHtml(newEntry.filename)}</span><br>
-      <span style="color:var(--text-muted);font-size:11px">Will transfer: art · metadata · rating · notes · status</span>`;
-
-    label.appendChild(cb);
-    label.appendChild(text);
-    row.appendChild(label);
-    box.appendChild(row);
+    for (const { newEntry, orphan } of mergeCandidates) {
+      const label = document.createElement('label');
+      label.style.cssText = `display:flex;align-items:flex-start;gap:10px;cursor:pointer;background:var(--surface-2);border-radius:8px;padding:12px`;
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = true;
+      cb.style.cssText = `margin-top:3px;flex-shrink:0;accent-color:var(--accent)`;
+      mergeChecks.push({ cb, newEntry, orphan });
+      const txt = document.createElement('div');
+      txt.style.cssText = `font-size:12px;line-height:1.7`;
+      txt.innerHTML = `<span style="color:var(--text-muted)">Was:</span> <span style="color:var(--text-dim)">${escHtml(orphan.filename)}</span><br>
+        <span style="color:var(--text-muted)">Now:</span> <span style="color:var(--text)">${escHtml(newEntry.filename)}</span>`;
+      label.appendChild(cb); label.appendChild(txt);
+      box.appendChild(label);
+    }
   }
 
+  // ── Section: Removed ─────────────────────────────────
+  const removeChecks = [];
+  if (removedOrphans.length > 0) {
+    const h = document.createElement('div');
+    h.innerHTML = `<div style="font-size:14px;font-weight:700;color:var(--text)">${removedOrphans.length} game${removedOrphans.length > 1 ? 's' : ''} not found on SD card</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:4px">These files weren't found during the scan. Remove them from your library?</div>`;
+    box.appendChild(h);
+
+    for (const orphan of removedOrphans) {
+      const label = document.createElement('label');
+      label.style.cssText = `display:flex;align-items:flex-start;gap:10px;cursor:pointer;background:var(--surface-2);border-radius:8px;padding:12px`;
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = true;
+      cb.style.cssText = `margin-top:3px;flex-shrink:0;accent-color:var(--accent)`;
+      removeChecks.push({ cb, orphan });
+      const txt = document.createElement('div');
+      txt.style.cssText = `font-size:12px;line-height:1.7`;
+      txt.innerHTML = `<span style="color:var(--text)">${escHtml(orphan.title)}</span>
+        <span style="color:var(--text-muted)"> · ${escHtml(orphan.filename)}</span>`;
+      label.appendChild(cb); label.appendChild(txt);
+      box.appendChild(label);
+    }
+  }
+
+  // ── Buttons ───────────────────────────────────────────
   const btns = document.createElement('div');
-  btns.style.cssText = `display:flex;gap:8px;justify-content:flex-end`;
+  btns.style.cssText = `display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap`;
 
   const skipBtn = document.createElement('button');
   skipBtn.className = 'btn';
-  skipBtn.textContent = 'Skip all';
+  skipBtn.textContent = 'Do nothing';
   skipBtn.style.cssText = 'background:transparent;border:1px solid var(--border-2)';
-  skipBtn.onclick = () => document.body.removeChild(overlay);
+  skipBtn.onclick = close;
 
-  const mergeBtn = document.createElement('button');
-  mergeBtn.className = 'btn';
-  mergeBtn.textContent = 'Merge selected';
-  mergeBtn.style.cssText = 'background:var(--accent);color:#000;font-weight:700';
-  mergeBtn.onclick = () => {
-    let mergeCount = 0;
-    for (const { cb, newEntry, orphan } of checks) {
+  const applyBtn = document.createElement('button');
+  applyBtn.className = 'btn';
+  applyBtn.textContent = 'Apply';
+  applyBtn.style.cssText = 'background:var(--accent);color:#000;font-weight:700';
+  applyBtn.onclick = () => {
+    let mergeCount = 0, removeCount = 0;
+
+    for (const { cb, newEntry, orphan } of mergeChecks) {
       if (!cb.checked) continue;
-      // Copy enriched data from orphan → new entry
-      newEntry.title      = orphan.title;
-      newEntry.boxArt     = orphan.boxArt;
-      newEntry.screenshots= orphan.screenshots || [];
-      newEntry.year       = orphan.year;
-      newEntry.genre      = orphan.genre;
-      newEntry.developer  = orphan.developer;
-      newEntry.publisher  = orphan.publisher;
-      newEntry.players    = orphan.players;
-      newEntry.overview   = orphan.overview;
-      newEntry.status     = orphan.status;
-      newEntry.rating     = orphan.rating;
-      newEntry.notes      = orphan.notes;
-      newEntry.tags       = orphan.tags;
-      newEntry.itchUrl    = orphan.itchUrl;
-      newEntry.ssId       = orphan.ssId;
-      newEntry.tgdbId     = orphan.tgdbId;
-      newEntry.sgdbId     = orphan.sgdbId;
-      newEntry.ssAttempted   = orphan.ssAttempted;
-      newEntry.tgdbAttempted = orphan.tgdbAttempted;
-      newEntry.sgdbAttempted = orphan.sgdbAttempted;
-      newEntry.dateAdded  = orphan.dateAdded;
-      newEntry.lastPlayed = orphan.lastPlayed;
-      // Remove orphan from library
+      mergeGameData(newEntry, orphan);
       library.games = library.games.filter(g => g.id !== orphan.id);
       mergeCount++;
     }
-    document.body.removeChild(overlay);
-    if (mergeCount > 0) {
+    for (const { cb, orphan } of removeChecks) {
+      if (!cb.checked) continue;
+      library.games = library.games.filter(g => g.id !== orphan.id);
+      removeCount++;
+    }
+
+    close();
+    if (mergeCount > 0 || removeCount > 0) {
       scheduleSave();
       renderGames();
-      toast(mergeCount + ' game' + (mergeCount !== 1 ? 's' : '') + ' merged successfully', 'ok');
+      const parts = [];
+      if (mergeCount) parts.push(mergeCount + ' merged');
+      if (removeCount) parts.push(removeCount + ' removed');
+      toast(parts.join(', '), 'ok');
     }
   };
 
   btns.appendChild(skipBtn);
-  btns.appendChild(mergeBtn);
+  btns.appendChild(applyBtn);
   box.appendChild(btns);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
@@ -3808,15 +3840,11 @@ async function enrichOneGame(game) {
 }
 
 async function enrichAll(scope) {
-  const creds = getSsCreds();
-  const hasSsCreds = !!(creds.user && creds.pass);
-
   // Use provided scope (selected or visible), falling back to all visible
   const visible = scope || getFilteredGames();
-  const toEnrich = hasSsCreds ? visible.filter(g => !g.ssAttempted && g.platform !== 'other') : [];
   const needArt  = visible.filter(g => !g.boxArt && g.platform !== 'other');
 
-  if (toEnrich.length === 0 && needArt.length === 0) {
+  if (needArt.length === 0) {
     const withArt = visible.filter(g => g.boxArt).length;
     toast('All enriched (' + withArt + '/' + visible.length + ' have art). Shift+click to reset and retry.', 'ok');
     el('btn-enrich').disabled = false;
@@ -3923,21 +3951,6 @@ async function enrichAll(scope) {
     }
   } else if (!getTgdbKey()) {
     toast('Tip: add a TheGamesDB API key in Settings for screenshots & artwork.', '');
-  }
-
-  // ── Pass 4: ScreenScraper (metadata + art for remainder) ──
-  // (itch.io retail fallback removed — retail GBC/GBA games don't exist on itch.io
-  //  and the API calls just waste rate limit budget.)
-  if (!hasSsCreds) {
-    toast('Tip: add ScreenScraper credentials in Settings for better metadata.', 'ok');
-  }
-  done = 0;
-  for (const game of toEnrich) {
-    showProgress('ScreenScraper… ' + done + '/' + toEnrich.length, Math.round(done / toEnrich.length * 100));
-    const result = await enrichGame(game);
-    if (result === null) break; // rate limit — stop
-    done++;
-    await new Promise(r => setTimeout(r, 300));
   }
 
   hideProgress();
