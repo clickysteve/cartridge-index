@@ -2367,16 +2367,6 @@ body {
     </div>
     <div class="modal-body" style="gap:14px">
 
-      <div class="settings-section">
-        <div class="settings-section-title">SteamGridDB — Grid Art & Hero Banners</div>
-        <div class="field-row">
-          <div class="field-label">API Key</div>
-          <input class="field-input" id="sgdb-key" type="text" placeholder="Paste your SteamGridDB API key" autocomplete="off">
-        </div>
-        <div class="field-hint">
-          Free key at <a href="https://www.steamgriddb.com/profile/preferences/api" target="_blank">steamgriddb.com</a> — sign in, go to Preferences → API. No monthly limit.
-        </div>
-      </div>
 
       <div class="settings-section">
         <div class="settings-section-title">TheGamesDB — Screenshots & Artwork</div>
@@ -2503,7 +2493,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.41';
+const APP_VERSION    = 'v0.5.42';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -3823,10 +3813,8 @@ async function enrichOneGame(game) {
     await enrichGameTgdb(game);
   }
 
-  // SteamGridDB — grid art and hero banners (CORS-friendly, no proxy needed)
-  if (getSgdbKey() && !game.sgdbAttempted) {
-    await enrichGameSgdb(game);
-  }
+  // SteamGridDB disabled — too much fan art
+  // if (getSgdbKey() && !game.sgdbAttempted) await enrichGameSgdb(game);
 
   // SS disabled — re-enable when dev credentials are obtained
   // const creds = getSsCreds();
@@ -4817,7 +4805,6 @@ function updateStars(rating) {
 
 // ── SETTINGS MODAL ───────────────────────────────────────
 function openSettings() {
-  el('sgdb-key').value   = getSgdbKey();
   el('tgdb-key').value   = getTgdbKey();
   el('ss-proxy').value   = getSsCreds().proxy || '';
   el('settings-drive-status').textContent = gapiReady ? 'Connected to Google Drive.' : 'Not connected.';
@@ -4825,7 +4812,6 @@ function openSettings() {
 }
 
 function saveSettings() {
-  saveSgdbKey(el('sgdb-key').value.trim());
   saveTgdbKey(el('tgdb-key').value.trim());
   const proxy = el('ss-proxy').value.trim();
   // Preserve any existing SS user creds; just update proxy
