@@ -2521,7 +2521,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.31';
+const APP_VERSION    = 'v0.5.32';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2529,14 +2529,19 @@ const TOKEN_KEY      = 'cartridge:gtoken:v1';
 const SS_CREDS_KEY   = 'cartridge:ss:creds:v1';
 
 const SS_API        = 'https://www.screenscraper.fr/api2/jeuInfos.php';
-// Public CORS proxies — SS blocks them aggressively, so we try each in turn.
+// CORS proxy list — only allorigins as last-ditch fallback; CF Worker (set in Settings) is preferred.
 const SS_PROXY_LIST = [
-  url => 'https://api.allorigins.win/raw?url='      + encodeURIComponent(url),
-  url => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url),
-  url => 'https://corsproxy.io/?'                   + encodeURIComponent(url),
-  url => 'https://proxy.cors.sh/'                   + url,
+  url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
 ];
-let ssCorsProxyIdx = 0; // index of the proxy that last worked
+let ssCorsProxyIdx = 0;
+
+// General CORS proxy: routes any URL through the CF Worker if configured, else allorigins.
+// Used for TGDB, SGDB, and SS.
+function corsProxy(url) {
+  const worker = getSsCreds().proxy; // reuse the SS proxy setting
+  if (worker) return worker + encodeURIComponent(url);
+  return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
+}
 
 const TGDB_API      = 'https://api.thegamesdb.net/v1';
 const TGDB_KEY_KEY  = 'cartridge:tgdb:key:v1';
@@ -2974,7 +2979,7 @@ async function enrichGameTgdb(game) {
   try {
     // Step 1: search for the game by title + platform (1 request)
     const searchResp = await fetch(
-      `${TGDB_API}/Games/ByGameName?name=${searchTitle}&fields=id,game_title&filter[platform]=${platId}&apikey=${key}`,
+      corsProxy(`${TGDB_API}/Games/ByGameName?name=${searchTitle}&fields=id,game_title&filter[platform]=${platId}&apikey=${key}`),
       { signal: AbortSignal.timeout(10000) }
     );
     addTgdbUsage(1);
@@ -2998,7 +3003,7 @@ async function enrichGameTgdb(game) {
 
     // Step 2: fetch screenshots, fanart, titlescreen (1 request)
     const imgResp = await fetch(
-      `${TGDB_API}/Games/Images?games_id=${bestId}&filter[type]=screenshot,fanart,titlescreen&apikey=${key}`,
+      corsProxy(`${TGDB_API}/Games/Images?games_id=${bestId}&filter[type]=screenshot,fanart,titlescreen&apikey=${key}`),
       { signal: AbortSignal.timeout(10000) }
     );
     addTgdbUsage(1);
@@ -3033,10 +3038,12 @@ async function enrichGameSgdb(game) {
 
   const searchTitle = encodeURIComponent(game.searchOverride || game.title);
   try {
+    // Route through CF Worker proxy; worker forwards Authorization header to SGDB
+    const authHeaders = { Authorization: `Bearer ${key}` };
     // Step 1: find the game
     const searchResp = await fetch(
-      `${SGDB_API}/search/autocomplete/${searchTitle}`,
-      { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) }
+      corsProxy(`${SGDB_API}/search/autocomplete/${searchTitle}`),
+      { headers: authHeaders, signal: AbortSignal.timeout(8000) }
     );
     if (!searchResp.ok) { console.warn('[CI] SGDB search failed:', searchResp.status); return; }
     const results = (await searchResp.json())?.data;
@@ -3051,11 +3058,9 @@ async function enrichGameSgdb(game) {
     console.log('[CI] SGDB matched:', game.title, '→', best.name, '(id', best.id + ')');
 
     // Step 2: fetch grids (portrait box art) + heroes (landscape banner) in parallel
-    const headers = { Authorization: `Bearer ${key}` };
-    const sig = AbortSignal.timeout(8000);
     const [gridsResp, heroesResp] = await Promise.all([
-      fetch(`${SGDB_API}/grids/game/${best.id}?dimensions=600x900,342x482&limit=6`, { headers, signal: sig }),
-      fetch(`${SGDB_API}/heroes/game/${best.id}?limit=6`, { headers, signal: AbortSignal.timeout(8000) }),
+      fetch(corsProxy(`${SGDB_API}/grids/game/${best.id}?dimensions=600x900,342x482&limit=6`), { headers: authHeaders, signal: AbortSignal.timeout(8000) }),
+      fetch(corsProxy(`${SGDB_API}/heroes/game/${best.id}?limit=6`),                           { headers: authHeaders, signal: AbortSignal.timeout(8000) }),
     ]);
 
     const newUrls = [];
