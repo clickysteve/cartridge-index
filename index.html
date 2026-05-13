@@ -2502,7 +2502,7 @@ body {
 'use strict';
 
 // ── CONFIG ──────────────────────────────────────────────
-const APP_VERSION    = 'v0.5.26';
+const APP_VERSION    = 'v0.5.27';
 const GOOGLE_CLIENT_ID = '1014634679996-uqoho41464ps4oseerjveu2vo3ttm7lh.apps.googleusercontent.com';
 const SCOPE          = 'https://www.googleapis.com/auth/drive.appdata';
 const DRIVE_FILENAME = 'cartridge-index-state.json';
@@ -2510,7 +2510,7 @@ const TOKEN_KEY      = 'cartridge:gtoken:v1';
 const SS_CREDS_KEY   = 'cartridge:ss:creds:v1';
 
 const SS_API        = 'https://www.screenscraper.fr/api2/jeuInfos.php';
-const SS_CORS_PROXY = 'https://corsproxy.io/?';
+const SS_CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
 const TGDB_API      = 'https://api.thegamesdb.net/v1';
 const TGDB_KEY_KEY  = 'cartridge:tgdb:key:v1';
@@ -3013,8 +3013,8 @@ async function enrichGame(game) {
 
   try {
     const ssUrl = SS_API + '?' + params.toString();
-    // corsproxy.io: append URL directly (params already URL-encoded by URLSearchParams)
-    const resp = await fetch(SS_CORS_PROXY + ssUrl, {
+    // allorigins.win/raw requires the target URL to be encodeURIComponent-encoded
+    const resp = await fetch(SS_CORS_PROXY + encodeURIComponent(ssUrl), {
       method: 'GET',
       signal: AbortSignal.timeout(12000),
     });
@@ -3028,7 +3028,7 @@ async function enrichGame(game) {
       return false;
     }
 
-    // corsproxy.io returns the raw SS JSON directly (no wrapper)
+    // allorigins.win/raw returns the response body directly (no wrapper)
     const data = await resp.json();
     const jeu = data?.response?.jeu;
 
@@ -4196,12 +4196,12 @@ function isVideoUrl(src) {
     || /[?&]media=video/i.test(src);
 }
 
-// Proxy a URL if it's from screenscraper.fr (images need CORS proxy too).
-// corsproxy.io expects the target URL appended raw (not encoded) — same as API calls.
+// Proxy SS image URLs through allorigins (adds CORS headers).
+// allorigins.win/raw requires encodeURIComponent on the target URL.
 function mediaProxyUrl(src) {
   if (!src) return src;
   if (src.includes('screenscraper.fr') && !src.startsWith(SS_CORS_PROXY)) {
-    return SS_CORS_PROXY + src;  // raw append, no encoding
+    return SS_CORS_PROXY + encodeURIComponent(src);
   }
   return src;
 }
